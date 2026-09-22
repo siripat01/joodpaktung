@@ -21,6 +21,7 @@ Terra must still stop before an irreversible external action, use of real money 
 | D-009 | Every meaningful boundary emits structured, redacted logs. | Logs are diagnostic only; the append-only ledger and domain events are the durable audit. PINs, secrets, tokens, raw signatures, and personal data are never logged. |
 | D-010 | Terra orchestrates work, Luna implements task-sized changes with tests, and an independent reviewer gates each completed task. | This preserves a review boundary for state-machine, ledger, concurrency, and recovery changes. |
 | D-011 | Use pnpm workspaces through Corepack, Node.js 24.21.0 LTS, Go 1.27.1, and PostgreSQL 18.6; pin their Docker tags and all dependency lockfiles. | Corepack pins pnpm without a global installation. Node 24 is the current LTS release, Go 1.27.1 is the current stable release, and PostgreSQL 18.6 is the current supported minor release when this decision was made. |
+| D-012 | When this Codex harness exposes no subagent-dispatch tool, Terra follows the inline execution workflow: TDD and a documented self-review per task, followed by an independent whole-branch review before merge or push. | This is a constrained substitute for D-010's per-task reviewer gate, not an equivalence claim. It keeps delivery moving while preserving a clear review debt and prevents declaring the branch ready to merge without fresh independent review. |
 
 ## Decision lifecycle
 

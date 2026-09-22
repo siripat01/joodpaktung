@@ -46,6 +46,12 @@
     scripts/                            migrations, fixtures, proof, rehearsal
     docs/                               demo script and performance evidence
 
+## Execution Status — 2026-09-22
+
+- **Task 1 — Complete:** implemented, Docker-verified, and reviewer-approved. Commits: `a125ff5`, `0e0d348`.
+- **Task 2 — Implementation and inline self-review complete:** TDD, domain suite, typecheck, and the follow-up type-safety fix are complete. Commits: `38b8799`, `a8f537b`. The current harness has no subagent-dispatch tool, so independent review is deferred to the required whole-branch gate before merge or push (D-012).
+- **Tasks 3–10 — Not started.**
+
 ### Task 1: Bootstrap the pinned pnpm workspace and services
 
 **Files:**
@@ -59,7 +65,7 @@
 **Interfaces:**
 - Produces: GET /health returns { service: string, status: 'ok' } from Core and Mock Courier. Compose exposes Core :3000, Courier :3001, Web :5173, and Postgres :5432.
 
-- [ ] **Step 1: Write failing health tests**
+- [x] **Step 1: Write failing health tests**
 
     import { buildServer } from '../src/server.js';
 
@@ -70,13 +76,13 @@
       expect(response.json()).toEqual({ service: 'payment-core', status: 'ok' });
     });
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: pnpm --filter @kplus/core test -- health.test.ts
 
 Expected: FAIL because the workspace and buildServer do not exist.
 
-- [ ] **Step 3: Write the minimal workspace and health implementation**
+- [x] **Step 3: Write the minimal workspace and health implementation**
 
     {
       "name": "kplus-conditional-payment-poc",
@@ -108,13 +114,13 @@ Run Corepack before pnpm install. Pin node:24.21.0-bookworm-slim, golang:1.27.1-
 
 Each TypeScript package declares its own name, private true, type module, test script vitest run, and typecheck script tsc --noEmit. The Core package adds Fastify, pg, Pino, Zod, Vitest, and fast-check; the web package adds React, Vite, TanStack Query, Testing Library, and Vitest; the Courier package adds Fastify and Vitest.
 
-- [ ] **Step 4: Run local and container health checks**
+- [x] **Step 4: Run local and container health checks**
 
 Run: corepack enable && corepack prepare pnpm@10.21.0 --activate && pnpm install --frozen-lockfile=false && pnpm --filter @kplus/core test -- health.test.ts && pnpm --filter @kplus/mock-courier test -- health.test.ts && docker compose up --build -d
 
 Expected: tests pass and curl --fail http://localhost:3000/health plus curl --fail http://localhost:3001/health return HTTP 200.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
     git init
     git add package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .gitignore compose.yaml .env.example README.md apps worker
@@ -129,7 +135,7 @@ Expected: tests pass and curl --fail http://localhost:3000/health plus curl --fa
 **Interfaces:**
 - Produces: PaymentState, transition(state, trigger), releaseForPickup(chargedFee), LedgerPosting, and assertBalanced(entries).
 
-- [ ] **Step 1: Write failing domain tests**
+- [x] **Step 1: Write failing domain tests**
 
     it('caps pickup release and leaves the product held', () => {
       expect(transition('Reserved', { type: 'courier_picked_up', chargedFee: 9000 }))
@@ -142,13 +148,13 @@ Expected: tests pass and curl --fail http://localhost:3000/health plus curl --fa
         .toThrow('invalid transition: Reserved + courier_delivered');
     });
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: pnpm --filter @kplus/core test -- domain
 
 Expected: FAIL because the state and ledger modules do not exist.
 
-- [ ] **Step 3: Write the closed state machine and balanced postings**
+- [x] **Step 3: Write the closed state machine and balanced postings**
 
     export const SHIPPING_CAP = 4500;
     export type PaymentState =
@@ -168,13 +174,13 @@ Expected: FAIL because the state and ledger modules do not exist.
 
 Model every approved transition: ship-by refund, pickup partial release, courier unavailable, manual verification, verification timeout, buyer confirm, auto-release, buyer dispute, and both Operations outcomes. Illegal transitions throw DomainRejection with code invalid_transition.
 
-- [ ] **Step 4: Run the domain suite**
+- [x] **Step 4: Run the domain suite**
 
 Run: pnpm --filter @kplus/core test -- domain && pnpm --filter @kplus/core typecheck
 
 Expected: PASS; all legal and illegal state origins, hold, shipping cap, remaining release, and refund postings are tested.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
     git add apps/core/src/domain apps/core/test/domain
     git commit -m "feat: add conditional-payment domain and ledger rules"
