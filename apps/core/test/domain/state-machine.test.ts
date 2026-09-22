@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { DomainRejection, type PaymentState } from '../../src/domain/types.js';
+import {
+  DomainRejection,
+  type PaymentState,
+  type PaymentTrigger
+} from '../../src/domain/types.js';
 import { releaseForPickup, transition } from '../../src/domain/state-machine.js';
 
 describe('payment state machine', () => {
@@ -9,7 +13,9 @@ describe('payment state machine', () => {
   });
 
   it('rejects delivered before pickup without state change', () => {
-    expect(() => transition('Reserved', { type: 'courier_delivered' } as never))
+    const delivered: PaymentTrigger = { type: 'courier_delivered' };
+
+    expect(() => transition('Reserved', delivered))
       .toThrow('invalid transition: Reserved + courier_delivered');
   });
 

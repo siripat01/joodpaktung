@@ -12,6 +12,7 @@ export type PaymentState = (typeof PAYMENT_STATES)[number];
 export type PaymentTrigger =
   | { readonly type: 'ship_by_expired' }
   | { readonly type: 'courier_picked_up'; readonly chargedFee: number }
+  | { readonly type: 'courier_delivered' }
   | { readonly type: 'courier_unavailable' }
   | { readonly type: 'operations_verify_fee'; readonly chargedFee: number }
   | { readonly type: 'verification_expired' }
