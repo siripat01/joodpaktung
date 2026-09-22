@@ -1,11 +1,23 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { appendLedgerEntries } from '../../src/db/ledger-repository.js';
 import { lockOrder } from '../../src/db/order-repository.js';
-import { getPool } from '../../src/db/pool.js';
+import { closePool, getPool } from '../../src/db/pool.js';
 import { withTransaction } from '../../src/db/transaction.js';
 import { databaseUrl, ensureTestDatabase } from './database.js';
+
+const execFileAsync = promisify(execFile);
+const repositoryRoot = new URL('../../../../', import.meta.url).pathname;
+
+async function runMigration(): Promise<void> {
+  await execFileAsync(process.execPath, ['scripts/migrate.mjs'], {
+    cwd: repositoryRoot,
+    env: { ...process.env, DATABASE_URL: databaseUrl }
+  });
+}
 
 describe('database interfaces', () => {
   const pool = new Pool({ connectionString: databaseUrl });
@@ -13,6 +25,7 @@ describe('database interfaces', () => {
 
   beforeAll(async () => {
     await ensureTestDatabase();
+    await runMigration();
     await pool.query(
       'TRUNCATE domain_events, outbox_events, timers, processed_events, ledger_entries, orders, clock_state RESTART IDENTITY CASCADE'
     );
@@ -25,19 +38,35 @@ describe('database interfaces', () => {
   });
 
   afterAll(async () => {
+    await closePool();
     await pool.end();
   });
 
   it('rolls back failed transactions and releases the client', async () => {
     const marker = randomUUID();
+    let failedBackendPid: number | undefined;
     await expect(
       withTransaction(async (client) => {
-        await client.query('CREATE TEMP TABLE transaction_probe (value text)');
-        await client.query('INSERT INTO transaction_probe (value) VALUES ($1)', [marker]);
+        const backend = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+        failedBackendPid = backend.rows[0]?.pid;
+        await client.query(
+          `INSERT INTO orders (id, shipment_token, state, product_satang, shipping_cap_satang, total_satang)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [randomUUID(), marker, 'pre_payment', 129000, 4500, 133500]
+        );
         throw new Error('rollback probe');
       })
     ).rejects.toThrow('rollback probe');
+    expect(failedBackendPid).toBeTypeOf('number');
 
+    const durableState = await pool.query('SELECT 1 FROM orders WHERE shipment_token = $1', [marker]);
+    expect(durableState.rowCount).toBe(0);
+
+    const reusedBackendPid = await withTransaction(async (client) => {
+      const backend = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      return backend.rows[0]?.pid;
+    });
+    expect(reusedBackendPid).toBe(failedBackendPid);
     await expect(
       withTransaction(async (client) => {
         const result = await client.query('SELECT 1 AS value');

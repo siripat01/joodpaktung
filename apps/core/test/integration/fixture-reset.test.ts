@@ -48,7 +48,30 @@ describe('fixture reset', () => {
        VALUES ($1, $2, $3, now(), $4)`,
       [randomUUID(), seedOrderId, 'fixture-test', `fixture-${randomUUID()}`]
     );
+    await pool.query(
+      `INSERT INTO processed_events (event_key, order_id, outcome, result)
+       VALUES ($1, $2, $3, $4)`,
+      [`fixture-${randomUUID()}`, seedOrderId, 'processed', { fixture: true }]
+    );
+    const ledgerTransactionId = randomUUID();
+    await pool.query(
+      `INSERT INTO ledger_entries (id, order_id, transaction_id, account, amount_satang)
+       VALUES ($1, $2, $3, $4, $5), ($6, $2, $3, $7, $8)`,
+      [
+        randomUUID(),
+        seedOrderId,
+        ledgerTransactionId,
+        'buyer_available',
+        -100,
+        randomUUID(),
+        'hold_suspense',
+        100
+      ]
+    );
+    await pool.query("UPDATE clock_state SET now_at = '2000-01-01T00:00:00Z', updated_at = '2000-01-01T00:00:00Z'");
+    const resetStartedAt = Date.now();
     await runScript('scripts/reset-fixture.mjs');
+    const resetFinishedAt = Date.now();
 
     const orders = await pool.query<{
       state: string;
@@ -69,7 +92,14 @@ describe('fixture reset', () => {
       const result = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM ${table}`);
       expect(result.rows[0]?.count).toBe('0');
     }
-    const clock = await pool.query('SELECT singleton FROM clock_state');
-    expect(clock.rows).toEqual([{ singleton: true }]);
+    const clock = await pool.query<{ singleton: boolean; now_at: Date; updated_at: Date }>(
+      'SELECT singleton, now_at, updated_at FROM clock_state'
+    );
+    expect(clock.rows).toHaveLength(1);
+    expect(clock.rows[0]?.singleton).toBe(true);
+    expect(clock.rows[0]?.now_at.getTime()).toBeGreaterThanOrEqual(resetStartedAt - 1000);
+    expect(clock.rows[0]?.now_at.getTime()).toBeLessThanOrEqual(resetFinishedAt + 1000);
+    expect(clock.rows[0]?.updated_at.getTime()).toBeGreaterThanOrEqual(resetStartedAt - 1000);
+    expect(clock.rows[0]?.updated_at.getTime()).toBeLessThanOrEqual(resetFinishedAt + 1000);
   });
 });
