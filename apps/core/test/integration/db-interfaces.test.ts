@@ -115,16 +115,16 @@ describe('database interfaces', () => {
     await expect(
       withTransaction(async (transaction) =>
         appendLedgerEntries(transaction, [
-          { orderId, transactionId: transactionA, posting: { account: 'hold_suspense', amountSatang: 100 } },
-          { orderId, transactionId: transactionB, posting: { account: 'hold_suspense', amountSatang: -100 } }
+          { orderId, transactionId: transactionA, posting: { account: 'hold_suspense', amountSatang: 100n } },
+          { orderId, transactionId: transactionB, posting: { account: 'hold_suspense', amountSatang: -100n } }
         ])
       )
     ).rejects.toThrow('unbalanced ledger');
 
     await withTransaction(async (transaction) => {
       await appendLedgerEntries(transaction, [
-        { orderId, transactionId: transactionA, posting: { account: 'buyer_available', amountSatang: -100 } },
-        { orderId, transactionId: transactionA, posting: { account: 'hold_suspense', amountSatang: 100 } }
+        { orderId, transactionId: transactionA, posting: { account: 'buyer_available', amountSatang: -100n } },
+        { orderId, transactionId: transactionA, posting: { account: 'hold_suspense', amountSatang: 100n } }
       ]);
     });
     const result = await pool.query<{ count: string }>(

@@ -7,9 +7,9 @@ import {
 import { releaseForPickup, transition } from '../../src/domain/state-machine.js';
 
 describe('payment state machine', () => {
-  it('caps pickup release and leaves the product held', () => {
+  it('preserves the verified courier fee for settlement', () => {
     expect(transition('Reserved', { type: 'courier_picked_up', chargedFee: 9000 }))
-      .toMatchObject({ to: 'PartiallyReleased', shippingRelease: 4500 });
+      .toMatchObject({ to: 'Shipped', shippingRelease: 9000n });
   });
 
   it('rejects delivered before pickup without state change', () => {
@@ -22,13 +22,13 @@ describe('payment state machine', () => {
   it('accepts every approved legal transition', () => {
     const legalTransitions: ReadonlyArray<readonly [PaymentState, object, PaymentState]> = [
       ['Reserved', { type: 'ship_by_expired' }, 'Refunded'],
-      ['Reserved', { type: 'courier_picked_up', chargedFee: 4500 }, 'PartiallyReleased'],
+      ['Reserved', { type: 'courier_picked_up', chargedFee: 4500 }, 'Shipped'],
       ['Reserved', { type: 'courier_unavailable' }, 'PendingVerification'],
-      ['PendingVerification', { type: 'operations_verify_fee', chargedFee: 4500 }, 'PartiallyReleased'],
+      ['PendingVerification', { type: 'operations_verify_fee', chargedFee: 4500 }, 'Shipped'],
       ['PendingVerification', { type: 'verification_expired' }, 'Refunded'],
-      ['PartiallyReleased', { type: 'buyer_confirmed' }, 'Released'],
-      ['PartiallyReleased', { type: 'auto_release_expired' }, 'Released'],
-      ['PartiallyReleased', { type: 'buyer_disputed' }, 'Disputed'],
+      ['Shipped', { type: 'buyer_confirmed' }, 'Released'],
+      ['Shipped', { type: 'auto_release_expired' }, 'Released'],
+      ['Shipped', { type: 'buyer_disputed' }, 'Disputed'],
       ['Disputed', { type: 'operations_resolve_refund' }, 'Refunded'],
       ['Disputed', { type: 'operations_resolve_release' }, 'Released']
     ];
@@ -42,7 +42,7 @@ describe('payment state machine', () => {
     const states: PaymentState[] = [
       'Reserved',
       'PendingVerification',
-      'PartiallyReleased',
+      'Shipped',
       'Disputed',
       'Released',
       'Refunded'
@@ -65,9 +65,9 @@ describe('payment state machine', () => {
       'Reserved:courier_unavailable',
       'PendingVerification:operations_verify_fee',
       'PendingVerification:verification_expired',
-      'PartiallyReleased:buyer_confirmed',
-      'PartiallyReleased:auto_release_expired',
-      'PartiallyReleased:buyer_disputed',
+      'Shipped:buyer_confirmed',
+      'Shipped:auto_release_expired',
+      'Shipped:buyer_disputed',
       'Disputed:operations_resolve_refund',
       'Disputed:operations_resolve_release'
     ]);

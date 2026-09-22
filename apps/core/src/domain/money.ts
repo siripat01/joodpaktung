@@ -1,23 +1,30 @@
-export type Satang = number & { readonly __satang: unique symbol };
+export type Satang = bigint;
+export type SatangInput = bigint | number | string;
 
-export function isIntegerSatang(value: number): value is Satang {
-  return Number.isSafeInteger(value);
+export function toSatang(value: SatangInput): Satang {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw new Error('invalid satang amount');
+    return BigInt(value);
+  }
+  if (!/^-?\d+$/.test(value)) throw new Error('invalid satang amount');
+  return BigInt(value);
 }
 
-export function assertIntegerSatang(value: number): asserts value is Satang {
-  if (!isIntegerSatang(value)) {
-    throw new Error('invalid satang amount');
+export function isIntegerSatang(value: SatangInput): value is Satang {
+  try {
+    toSatang(value);
+    return true;
+  } catch {
+    return false;
   }
 }
 
-export function toSatang(value: number): Satang {
-  assertIntegerSatang(value);
-  return value;
+export function assertIntegerSatang(value: SatangInput): asserts value is Satang {
+  toSatang(value);
 }
 
-export function assertNonNegativeSatang(value: number): asserts value is Satang {
-  assertIntegerSatang(value);
-  if (value < 0) {
-    throw new Error('invalid satang amount');
-  }
+export function assertNonNegativeSatang(value: SatangInput): asserts value is Satang {
+  const satang = toSatang(value);
+  if (satang < 0n) throw new Error('invalid satang amount');
 }

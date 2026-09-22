@@ -1,12 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(new URL('../apps/core/package.json', import.meta.url));
 const { Pool } = require('pg');
 
-const migrationId = '001_init';
-const migrationPath = fileURLToPath(new URL('../apps/core/migrations/001_init.sql', import.meta.url));
+const migrationsDirectory = fileURLToPath(new URL('../apps/core/migrations/', import.meta.url));
 
 function databaseUrl() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -27,9 +26,14 @@ export async function migrate(connectionString = databaseUrl()) {
         applied_at timestamptz NOT NULL DEFAULT now()
       )`
     );
-    const applied = await client.query('SELECT 1 FROM schema_migrations WHERE id = $1', [migrationId]);
-    if (applied.rowCount === 0) {
-      await client.query(await readFile(migrationPath, 'utf8'));
+    const migrationFiles = (await readdir(migrationsDirectory))
+      .filter((file) => file.endsWith('.sql'))
+      .sort();
+    for (const migrationFile of migrationFiles) {
+      const migrationId = migrationFile.replace(/\.sql$/, '');
+      const applied = await client.query('SELECT 1 FROM schema_migrations WHERE id = $1', [migrationId]);
+      if (applied.rowCount !== 0) continue;
+      await client.query(await readFile(new URL(`../apps/core/migrations/${migrationFile}`, import.meta.url), 'utf8'));
       await client.query('INSERT INTO schema_migrations (id) VALUES ($1)', [migrationId]);
     }
     await client.query('COMMIT');

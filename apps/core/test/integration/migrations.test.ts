@@ -44,6 +44,25 @@ describe('PostgreSQL migrations', () => {
       ])
     );
 
+    const orderColumns = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'orders'`
+    );
+    expect(orderColumns.rows.map((row) => row.column_name)).toEqual(expect.arrayContaining([
+      'courier_paid_satang',
+      'courier_charge_satang',
+      'courier_charge_finalized',
+      'delivered_at',
+      'buyer_confirmed_at'
+    ]));
+
+    const accounts = await pool.query<{ definition: string }>(
+      `SELECT pg_get_constraintdef(oid) AS definition
+         FROM pg_constraint WHERE conrelid = 'ledger_entries'::regclass
+           AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%courier_payable%'`
+    );
+    expect(accounts.rows).toHaveLength(1);
+
     const orderId = randomUUID();
     const entryId = randomUUID();
     const transactionId = randomUUID();

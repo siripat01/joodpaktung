@@ -4,14 +4,19 @@ import {
   type PaymentTrigger,
   type TransitionResult
 } from './types.js';
+import { toSatang, type SatangInput } from './money.js';
 
 export const SHIPPING_CAP = 4500;
 
-export function releaseForPickup(chargedFee: number): number {
-  if (!Number.isSafeInteger(chargedFee) || chargedFee < 0) {
+export function releaseForPickup(chargedFee: SatangInput): bigint {
+  let fee: bigint;
+  try {
+    fee = toSatang(chargedFee);
+  } catch {
     throw new Error('invalid charged fee');
   }
-  return Math.min(chargedFee, SHIPPING_CAP);
+  if (fee < 0n) throw new Error('invalid charged fee');
+  return fee;
 }
 
 export function transition(state: PaymentState, trigger: PaymentTrigger): TransitionResult {
@@ -23,7 +28,7 @@ export function transition(state: PaymentState, trigger: PaymentTrigger): Transi
       if (trigger.type === 'courier_picked_up') {
         return {
           from: state,
-          to: 'PartiallyReleased',
+          to: 'Shipped',
           trigger,
           shippingRelease: releaseForPickup(trigger.chargedFee)
         };
@@ -37,7 +42,7 @@ export function transition(state: PaymentState, trigger: PaymentTrigger): Transi
       if (trigger.type === 'operations_verify_fee') {
         return {
           from: state,
-          to: 'PartiallyReleased',
+          to: 'Shipped',
           trigger,
           shippingRelease: releaseForPickup(trigger.chargedFee)
         };
@@ -47,7 +52,10 @@ export function transition(state: PaymentState, trigger: PaymentTrigger): Transi
       }
       break;
 
-    case 'PartiallyReleased':
+    case 'Shipped':
+      if (trigger.type === 'courier_delivered' || trigger.type === 'courier_charge_updated') {
+        return { from: state, to: state, trigger };
+      }
       if (trigger.type === 'buyer_confirmed' || trigger.type === 'auto_release_expired') {
         return { from: state, to: 'Released', trigger };
       }

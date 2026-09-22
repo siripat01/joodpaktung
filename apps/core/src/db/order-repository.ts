@@ -12,7 +12,11 @@ export type LockedOrder = {
   readonly product_satang: string;
   readonly shipping_cap_satang: string;
   readonly total_satang: string;
-  readonly shipping_released_satang: string;
+  readonly courier_paid_satang: string;
+  readonly courier_charge_satang: string;
+  readonly courier_charge_finalized: boolean;
+  readonly delivered_at: Date | null;
+  readonly buyer_confirmed_at: Date | null;
   readonly product_released_satang: string;
   readonly refunded_satang: string;
   readonly ship_by: Date | null;
@@ -31,7 +35,11 @@ function toLockedOrder(order: typeof orders.$inferSelect | undefined, orderId: s
     product_satang: order.productSatang.toString(),
     shipping_cap_satang: order.shippingCapSatang.toString(),
     total_satang: order.totalSatang.toString(),
-    shipping_released_satang: order.shippingReleasedSatang.toString(),
+    courier_paid_satang: order.courierPaidSatang.toString(),
+    courier_charge_satang: order.courierChargeSatang.toString(),
+    courier_charge_finalized: order.courierChargeFinalized,
+    delivered_at: order.deliveredAt,
+    buyer_confirmed_at: order.buyerConfirmedAt,
     product_released_satang: order.productReleasedSatang.toString(),
     refunded_satang: order.refundedSatang.toString(),
     ship_by: order.shipBy,
@@ -55,7 +63,11 @@ export async function saveOrder(
   transaction: DatabaseTransaction,
   orderId: string,
   state: PersistedOrderState,
-  shippingSatang: bigint,
+  courierPaidSatang: bigint,
+  courierChargeSatang: bigint,
+  courierChargeFinalized: boolean,
+  deliveredAt: Date | null,
+  buyerConfirmedAt: Date | null,
   productSatang: bigint,
   refundedSatang: bigint
 ): Promise<LockedOrder> {
@@ -63,7 +75,11 @@ export async function saveOrder(
     .update(orders)
     .set({
       state,
-      shippingReleasedSatang: shippingSatang,
+      courierPaidSatang,
+      courierChargeSatang,
+      courierChargeFinalized,
+      deliveredAt,
+      buyerConfirmedAt,
       productReleasedSatang: productSatang,
       refundedSatang,
       updatedAt: sql`now()`

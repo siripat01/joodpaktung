@@ -1,7 +1,9 @@
+import type { SatangInput } from './money.js';
+
 export const PAYMENT_STATES = [
   'Reserved',
   'PendingVerification',
-  'PartiallyReleased',
+  'Shipped',
   'Disputed',
   'Released',
   'Refunded'
@@ -11,10 +13,11 @@ export type PaymentState = (typeof PAYMENT_STATES)[number];
 
 export type PaymentTrigger =
   | { readonly type: 'ship_by_expired' }
-  | { readonly type: 'courier_picked_up'; readonly chargedFee: number }
+  | { readonly type: 'courier_picked_up'; readonly chargedFee: SatangInput }
   | { readonly type: 'courier_delivered' }
+  | { readonly type: 'courier_charge_updated'; readonly chargedFee: SatangInput; readonly finalized: boolean }
   | { readonly type: 'courier_unavailable' }
-  | { readonly type: 'operations_verify_fee'; readonly chargedFee: number }
+  | { readonly type: 'operations_verify_fee'; readonly chargedFee: SatangInput }
   | { readonly type: 'verification_expired' }
   | { readonly type: 'buyer_confirmed' }
   | { readonly type: 'auto_release_expired' }
@@ -26,7 +29,7 @@ export type TransitionResult = {
   readonly from: PaymentState;
   readonly to: PaymentState;
   readonly trigger: PaymentTrigger;
-  readonly shippingRelease?: number;
+  readonly shippingRelease?: bigint;
 };
 
 export class DomainRejection extends Error {
