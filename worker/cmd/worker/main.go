@@ -1,7 +1,11 @@
 package main
 
-import "log"
+import (
+	"log/slog"
+	"os"
+)
 
 func main() {
-	log.Println("kplus worker")
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger.Info("worker started", "service", "kplus-worker")
 }

@@ -17,6 +17,10 @@ services:
       dockerfile: apps/web/Dockerfile
     ports:
       - "5173:5173"
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
   postgres:
     image: postgres:18.6-alpine
     environment:

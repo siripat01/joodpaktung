@@ -1,0 +1,8 @@
+node_modules
+dist
+.pnpm-store
+.env
+.git
+coverage
+*.prof
+*.out
