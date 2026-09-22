@@ -38,7 +38,7 @@ async function reconcileInTransaction(transaction: DatabaseTransaction): Promise
     if ((order.state === 'Released' || order.state === 'Refunded') && accounted !== total) {
       violations.push(`terminal accounting does not equal total: ${order.id}`);
     }
-    if (order.state !== 'Released' && order.state !== 'Refunded') {
+    if (order.state !== 'pre_payment' && order.state !== 'Released' && order.state !== 'Refunded') {
       expectedHold += total - accounted;
     }
   }
@@ -63,6 +63,12 @@ async function reconcileInTransaction(transaction: DatabaseTransaction): Promise
     const shipping = asBigInt(order.shipping);
     const product = asBigInt(order.product);
     const refunded = asBigInt(order.refunded);
+    const accounted = shipping + product + refunded;
+    if (order.state === 'pre_payment') {
+      if (accounted !== 0n) violations.push(`pre-payment order accounting is nonzero: ${order.id}`);
+      if (ledgerBalances.has(order.id)) violations.push(`pre-payment order has ledger entries: ${order.id}`);
+      continue;
+    }
     if ((balances.get('hold_suspense') ?? 0n) !== total - (shipping + product + refunded)) {
       violations.push(`order hold ledger mismatch: ${order.id}`);
     }

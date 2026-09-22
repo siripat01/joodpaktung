@@ -21,6 +21,11 @@ describe('Payment Core reconciliation', () => {
   beforeAll(async () => { await ensureTestDatabase(); await resetFixture(); });
   afterAll(async () => { await closePool(); await pool.end(); });
 
+  it('accepts a fresh pre-payment intent without a hold or ledger entry', async () => {
+    await resetFixture();
+    await expect(reconcile()).resolves.toMatchObject({ ok: true, violations: [] });
+  });
+
   it('keeps terminal accounting equal to order total', async () => {
     await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-1' }, {});
     await handleCommand({ type: 'ship_by_expired', orderId, eventKey: 'timer-1' }, {});

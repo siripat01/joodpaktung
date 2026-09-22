@@ -49,14 +49,19 @@ export async function assertOrderInvariants(transaction: DatabaseTransaction, or
     .where(eq(ledgerEntries.orderId, orderId))
     .groupBy(ledgerEntries.account);
   const balances = new Map(ledger.map((entry) => [entry.account, asBigInt(entry.balance)]));
-  if ((balances.get('hold_suspense') ?? 0n) !== order.total - accounted) {
-    throw new Error('order hold ledger mismatch');
-  }
-  if ((balances.get('seller_available') ?? 0n) !== order.shipping + order.product) {
-    throw new Error('order seller ledger mismatch');
-  }
-  if ((balances.get('buyer_refund') ?? 0n) !== order.refunded) {
-    throw new Error('order refund ledger mismatch');
+  if (order.state === 'pre_payment') {
+    if (accounted !== 0n) throw new Error('pre-payment order accounting is nonzero');
+    if (ledger.length) throw new Error('pre-payment order has ledger entries');
+  } else {
+    if ((balances.get('hold_suspense') ?? 0n) !== order.total - accounted) {
+      throw new Error('order hold ledger mismatch');
+    }
+    if ((balances.get('seller_available') ?? 0n) !== order.shipping + order.product) {
+      throw new Error('order seller ledger mismatch');
+    }
+    if ((balances.get('buyer_refund') ?? 0n) !== order.refunded) {
+      throw new Error('order refund ledger mismatch');
+    }
   }
 
   const [globalHold] = await transaction
@@ -70,7 +75,7 @@ export async function assertOrderInvariants(transaction: DatabaseTransaction, or
       remaining: sql<string>`COALESCE(SUM(${orders.totalSatang} - ${orders.shippingReleasedSatang} - ${orders.productReleasedSatang} - ${orders.refundedSatang}), 0)::text`
     })
     .from(orders)
-    .where(notInArray(orders.state, ['Released', 'Refunded']));
+    .where(notInArray(orders.state, ['pre_payment', 'Released', 'Refunded']));
   if (asBigInt(globalHold?.balance) !== asBigInt(globalRemaining?.remaining)) {
     throw new Error('global hold balance does not equal non-terminal remaining amounts');
   }
