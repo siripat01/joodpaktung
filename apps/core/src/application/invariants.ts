@@ -1,44 +1,77 @@
-import type { PoolClient } from 'pg';
+import { eq, notInArray, sql } from 'drizzle-orm';
+import type { DatabaseTransaction } from '../db/pool.js';
+import { ledgerEntries, orders } from '../db/schema.js';
 
-export async function assertOrderInvariants(client: PoolClient, orderId: string): Promise<void> {
-  const transactions = await client.query<{ transaction_id: string; balance: string }>(
-    `SELECT transaction_id, SUM(amount_satang)::text AS balance
-       FROM ledger_entries WHERE order_id = $1 GROUP BY transaction_id HAVING SUM(amount_satang) <> 0`,
-    [orderId]
-  );
-  if (transactions.rowCount) throw new Error(`unbalanced ledger transaction: ${transactions.rows[0]?.transaction_id}`);
+function asBigInt(value: bigint | string | number | null | undefined): bigint {
+  return BigInt(value ?? 0);
+}
 
-  const order = await client.query<{
-    state: string; total: string; shipping: string; product: string; refunded: string;
-  }>(
-    `SELECT state, total_satang::text AS total, shipping_released_satang::text AS shipping,
-            product_released_satang::text AS product, refunded_satang::text AS refunded
-       FROM orders WHERE id = $1`, [orderId]
-  );
-  const row = order.rows[0];
-  if (!row) throw new Error(`order not found: ${orderId}`);
-  const accounted = Number(row.shipping) + Number(row.product) + Number(row.refunded);
-  if (accounted > Number(row.total)) throw new Error('order accounting exceeds total');
-  if ((row.state === 'Released' || row.state === 'Refunded') && accounted !== Number(row.total)) {
+export async function assertOrderInvariants(transaction: DatabaseTransaction, orderId: string): Promise<void> {
+  const transactions = await transaction
+    .select({
+      transactionId: ledgerEntries.transactionId,
+      balance: sql<string>`SUM(${ledgerEntries.amountSatang})::text`
+    })
+    .from(ledgerEntries)
+    .where(eq(ledgerEntries.orderId, orderId))
+    .groupBy(ledgerEntries.transactionId)
+    .having(sql`SUM(${ledgerEntries.amountSatang}) <> 0`);
+  if (transactions.length) {
+    throw new Error(`unbalanced ledger transaction: ${transactions[0]?.transactionId}`);
+  }
+
+  const orderRows = await transaction
+    .select({
+      state: orders.state,
+      total: orders.totalSatang,
+      shipping: orders.shippingReleasedSatang,
+      product: orders.productReleasedSatang,
+      refunded: orders.refundedSatang
+    })
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+  const order = orderRows[0];
+  if (!order) throw new Error(`order not found: ${orderId}`);
+
+  const accounted = order.shipping + order.product + order.refunded;
+  if (accounted > order.total) throw new Error('order accounting exceeds total');
+  if ((order.state === 'Released' || order.state === 'Refunded') && accounted !== order.total) {
     throw new Error('terminal order accounting does not equal total');
   }
 
-  const ledger = await client.query<{ account: string; balance: string }>(
-    `SELECT account, COALESCE(SUM(amount_satang), 0)::text AS balance
-       FROM ledger_entries WHERE order_id = $1 GROUP BY account`, [orderId]
-  );
-  const balances = new Map(ledger.rows.map((entry) => [entry.account, Number(entry.balance)]));
-  if ((balances.get('hold_suspense') ?? 0) !== Number(row.total) - accounted) throw new Error('order hold ledger mismatch');
-  if ((balances.get('seller_available') ?? 0) !== Number(row.shipping) + Number(row.product)) throw new Error('order seller ledger mismatch');
-  if ((balances.get('buyer_refund') ?? 0) !== Number(row.refunded)) throw new Error('order refund ledger mismatch');
+  const ledger = await transaction
+    .select({
+      account: ledgerEntries.account,
+      balance: sql<string>`COALESCE(SUM(${ledgerEntries.amountSatang}), 0)::text`
+    })
+    .from(ledgerEntries)
+    .where(eq(ledgerEntries.orderId, orderId))
+    .groupBy(ledgerEntries.account);
+  const balances = new Map(ledger.map((entry) => [entry.account, asBigInt(entry.balance)]));
+  if ((balances.get('hold_suspense') ?? 0n) !== order.total - accounted) {
+    throw new Error('order hold ledger mismatch');
+  }
+  if ((balances.get('seller_available') ?? 0n) !== order.shipping + order.product) {
+    throw new Error('order seller ledger mismatch');
+  }
+  if ((balances.get('buyer_refund') ?? 0n) !== order.refunded) {
+    throw new Error('order refund ledger mismatch');
+  }
 
-  const global = await client.query<{ hold: string; remaining: string }>(
-    `SELECT
-       COALESCE((SELECT SUM(amount_satang) FROM ledger_entries WHERE account = 'hold_suspense'), 0)::text AS hold,
-       COALESCE((SELECT SUM(total_satang - shipping_released_satang - product_released_satang - refunded_satang)
-                   FROM orders WHERE state NOT IN ('Released', 'Refunded')), 0)::text AS remaining`
-  );
-  if (Number(global.rows[0]?.hold) !== Number(global.rows[0]?.remaining)) {
+  const [globalHold] = await transaction
+    .select({
+      balance: sql<string>`COALESCE(SUM(${ledgerEntries.amountSatang}), 0)::text`
+    })
+    .from(ledgerEntries)
+    .where(eq(ledgerEntries.account, 'hold_suspense'));
+  const [globalRemaining] = await transaction
+    .select({
+      remaining: sql<string>`COALESCE(SUM(${orders.totalSatang} - ${orders.shippingReleasedSatang} - ${orders.productReleasedSatang} - ${orders.refundedSatang}), 0)::text`
+    })
+    .from(orders)
+    .where(notInArray(orders.state, ['Released', 'Refunded']));
+  if (asBigInt(globalHold?.balance) !== asBigInt(globalRemaining?.remaining)) {
     throw new Error('global hold balance does not equal non-terminal remaining amounts');
   }
 }

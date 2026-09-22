@@ -1,4 +1,6 @@
-import type { PoolClient } from 'pg';
+import { eq, sql } from 'drizzle-orm';
+import type { DatabaseTransaction } from './pool.js';
+import { orders, type PersistedOrderState } from './schema.js';
 import type { PaymentState } from '../domain/types.js';
 
 export type OrderState = PaymentState | 'pre_payment';
@@ -20,17 +22,53 @@ export type LockedOrder = {
   readonly updated_at: Date;
 };
 
-export async function lockOrder(client: PoolClient, orderId: string): Promise<LockedOrder> {
-  const result = await client.query<LockedOrder>(
-    `SELECT id, shipment_token, state, product_satang, shipping_cap_satang, total_satang,
-            shipping_released_satang, product_released_satang, refunded_satang,
-            ship_by, verification_deadline, dispute_deadline, created_at, updated_at
-       FROM orders
-      WHERE id = $1
-      FOR UPDATE`,
-    [orderId]
-  );
-  const order = result.rows[0];
+function toLockedOrder(order: typeof orders.$inferSelect | undefined, orderId: string): LockedOrder {
   if (!order) throw new Error(`order not found: ${orderId}`);
-  return order;
+  return {
+    id: order.id,
+    shipment_token: order.shipmentToken,
+    state: order.state,
+    product_satang: order.productSatang.toString(),
+    shipping_cap_satang: order.shippingCapSatang.toString(),
+    total_satang: order.totalSatang.toString(),
+    shipping_released_satang: order.shippingReleasedSatang.toString(),
+    product_released_satang: order.productReleasedSatang.toString(),
+    refunded_satang: order.refundedSatang.toString(),
+    ship_by: order.shipBy,
+    verification_deadline: order.verificationDeadline,
+    dispute_deadline: order.disputeDeadline,
+    created_at: order.createdAt,
+    updated_at: order.updatedAt
+  };
+}
+
+export async function lockOrder(transaction: DatabaseTransaction, orderId: string): Promise<LockedOrder> {
+  const result = await transaction
+    .select()
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .for('update');
+  return toLockedOrder(result[0], orderId);
+}
+
+export async function saveOrder(
+  transaction: DatabaseTransaction,
+  orderId: string,
+  state: PersistedOrderState,
+  shippingSatang: bigint,
+  productSatang: bigint,
+  refundedSatang: bigint
+): Promise<LockedOrder> {
+  const result = await transaction
+    .update(orders)
+    .set({
+      state,
+      shippingReleasedSatang: shippingSatang,
+      productReleasedSatang: productSatang,
+      refundedSatang,
+      updatedAt: sql`now()`
+    })
+    .where(eq(orders.id, orderId))
+    .returning();
+  return toLockedOrder(result[0], orderId);
 }

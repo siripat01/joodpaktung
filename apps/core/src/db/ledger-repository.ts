@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { PoolClient } from 'pg';
+import { ledgerEntries } from './schema.js';
+import type { DatabaseTransaction } from './pool.js';
 import { assertBalanced, type LedgerPosting } from '../domain/ledger.js';
 
 export type LedgerEntryToAppend = {
@@ -9,7 +10,7 @@ export type LedgerEntryToAppend = {
 };
 
 export async function appendLedgerEntries(
-  client: PoolClient,
+  transaction: DatabaseTransaction,
   entries: readonly LedgerEntryToAppend[]
 ): Promise<void> {
   const postingsByTransaction = new Map<string, LedgerPosting[]>();
@@ -22,17 +23,15 @@ export async function appendLedgerEntries(
     assertBalanced(postings);
   }
 
-  for (const entry of entries) {
-    await client.query(
-      `INSERT INTO ledger_entries (id, order_id, transaction_id, account, amount_satang)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        randomUUID(),
-        entry.orderId,
-        entry.transactionId,
-        entry.posting.account,
-        entry.posting.amountSatang
-      ]
-    );
-  }
+  if (entries.length === 0) return;
+
+  await transaction.insert(ledgerEntries).values(
+    entries.map((entry) => ({
+      id: randomUUID(),
+      orderId: entry.orderId,
+      transactionId: entry.transactionId,
+      account: entry.posting.account,
+      amountSatang: BigInt(entry.posting.amountSatang)
+    }))
+  );
 }

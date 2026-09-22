@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit" },
   "dependencies": {
+    "drizzle-orm": "0.44.7",
     "fastify": "^5.6.1",
     "pg": "^8.16.3",
     "pino": "^9.10.0",
