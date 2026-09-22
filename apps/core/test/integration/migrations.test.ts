@@ -60,5 +60,8 @@ describe('PostgreSQL migrations', () => {
     await expect(
       pool.query('UPDATE ledger_entries SET amount_satang = 2 WHERE id = $1', [entryId])
     ).rejects.toThrow('ledger_entries are append-only');
+    await expect(pool.query('DELETE FROM ledger_entries WHERE id = $1', [entryId])).rejects.toThrow(
+      'ledger_entries are append-only'
+    );
   });
 });

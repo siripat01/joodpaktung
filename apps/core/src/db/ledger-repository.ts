@@ -12,7 +12,15 @@ export async function appendLedgerEntries(
   client: PoolClient,
   entries: readonly LedgerEntryToAppend[]
 ): Promise<void> {
-  assertBalanced(entries.map((entry) => entry.posting));
+  const postingsByTransaction = new Map<string, LedgerPosting[]>();
+  for (const entry of entries) {
+    const postings = postingsByTransaction.get(entry.transactionId) ?? [];
+    postings.push(entry.posting);
+    postingsByTransaction.set(entry.transactionId, postings);
+  }
+  for (const postings of postingsByTransaction.values()) {
+    assertBalanced(postings);
+  }
 
   for (const entry of entries) {
     await client.query(
