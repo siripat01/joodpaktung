@@ -1,0 +1,12 @@
+{
+  "name": "@kplus/mock-courier",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit" },
+  "dependencies": { "fastify": "^5.6.1" },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

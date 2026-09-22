@@ -1,0 +1,16 @@
+{
+  "name": "kplus-conditional-payment-poc",
+  "private": true,
+  "packageManager": "pnpm@10.21.0",
+  "engines": { "node": "24.21.0" },
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:migrate": "node scripts/migrate.mjs",
+    "fixture:reset": "node scripts/reset-fixture.mjs",
+    "proof:quick": "node scripts/quick-proof.mjs",
+    "proof:full": "node scripts/full-proof.mjs",
+    "demo:rehearsal": "node scripts/demo-rehearsal.mjs",
+    "compose:up": "docker compose up --build"
+  }
+}
