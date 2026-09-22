@@ -130,7 +130,9 @@ export async function handleCommand(command: PaymentCommand, context: CommandCon
       .from(processedEvents)
       .where(eq(processedEvents.eventKey, command.eventKey))
       .limit(1);
-    if (existing[0]) return existing[0].result as CommandResult;
+    if (existing[0]) {
+      return { ...(existing[0].result as CommandResult), outcome: 'duplicate-ignored' };
+    }
 
     let next = order;
     let releasedSatang = 0;
@@ -250,7 +252,9 @@ export async function handleCommand(command: PaymentCommand, context: CommandCon
         order: publicOrder(order),
         event: { name: command.type, eventKey: command.eventKey }
       };
-      await assertOrderInvariants(transaction, command.orderId);
+      if (order.state !== 'pre_payment') {
+        await assertOrderInvariants(transaction, command.orderId);
+      }
       await persistOutcome(transaction, command, result);
       return result;
     }

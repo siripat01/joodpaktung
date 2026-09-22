@@ -21,11 +21,12 @@ describe('Payment Core idempotency', () => {
   beforeAll(async () => { await ensureTestDatabase(); await resetFixture(); });
   afterAll(async () => { await closePool(); await pool.end(); });
 
-  it('returns the original result when a pickup command is replayed', async () => {
+  it('returns a duplicate-ignored result when a pickup command is replayed', async () => {
     await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-1' }, {});
     const command = { type: 'courier_pickup', orderId, eventKey: 'pickup-1', chargedFee: 4500 } as const;
     const [first, second] = await Promise.all([handleCommand(command, {}), handleCommand(command, {})]);
-    expect(first).toEqual(second);
+    expect([first.outcome, second.outcome].sort()).toEqual(['duplicate-ignored', 'processed']);
+    expect(first.order).toEqual(second.order);
     expect(await pool.query('SELECT count(DISTINCT transaction_id)::text AS count FROM ledger_entries WHERE order_id = $1', [orderId])).toMatchObject({ rows: [{ count: '2' }] });
     expect(await pool.query('SELECT count(*)::text AS count FROM processed_events WHERE event_key = $1', ['pickup-1'])).toMatchObject({ rows: [{ count: '1' }] });
   });

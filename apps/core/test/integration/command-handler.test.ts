@@ -58,4 +58,51 @@ describe('Payment Core command handler', () => {
     expect(result).toMatchObject({ outcome: 'rejected-invalid-transition' });
     expect(await pool.query('SELECT state FROM orders WHERE id = $1', [orderId])).toMatchObject({ rows: [{ state: 'PartiallyReleased' }] });
   });
+
+  it('retains an invalid courier event on a fresh pre-payment fixture', async () => {
+    await resetFixture();
+    const command = { type: 'courier_pickup', orderId, eventKey: 'pickup-before-fund-fresh', chargedFee: 4500 } as const;
+    const beforeOrder = await pool.query(
+      `SELECT state, shipping_released_satang::text AS shipping, product_released_satang::text AS product,
+              refunded_satang::text AS refunded
+         FROM orders WHERE id = $1`,
+      [orderId]
+    );
+    const beforeLedger = await pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM ledger_entries WHERE order_id = $1',
+      [orderId]
+    );
+
+    await expect(handleCommand(command, {})).resolves.toMatchObject({
+      outcome: 'rejected-invalid-transition',
+      order: { state: 'pre_payment' }
+    });
+
+    const processed = await pool.query<{ event_key: string; outcome: string }>(
+      'SELECT event_key, outcome FROM processed_events WHERE event_key = $1',
+      [command.eventKey]
+    );
+    expect(processed.rows).toEqual([
+      { event_key: command.eventKey, outcome: 'rejected-invalid-transition' }
+    ]);
+    expect(await pool.query(
+      `SELECT state, shipping_released_satang::text AS shipping, product_released_satang::text AS product,
+              refunded_satang::text AS refunded
+         FROM orders WHERE id = $1`,
+      [orderId]
+    )).toEqual(beforeOrder);
+    expect(await pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM ledger_entries WHERE order_id = $1',
+      [orderId]
+    )).toEqual(beforeLedger);
+
+    await expect(handleCommand(command, {})).resolves.toMatchObject({
+      outcome: 'duplicate-ignored',
+      order: { state: 'pre_payment' }
+    });
+    expect(await pool.query(
+      'SELECT count(*)::text AS count FROM processed_events WHERE event_key = $1',
+      [command.eventKey]
+    )).toMatchObject({ rows: [{ count: '1' }] });
+  });
 });
