@@ -6,6 +6,7 @@ import { Pool } from 'pg';
 import { handleCommand } from '../../src/application/command-handler.js';
 import { closePool } from '../../src/db/pool.js';
 import { buildServer } from '../../src/server.js';
+import { withFaultInjection } from '../../src/adapters/fault-decorator.js';
 import { HmacCourierProvider } from '../../src/ports/courier-provider.js';
 import { databaseUrl, ensureTestDatabase } from '../integration/database.js';
 
@@ -129,5 +130,45 @@ describe('signed courier webhook', () => {
     expect(output).not.toContain(secret);
     expect(output).not.toContain(webhook.headers['x-courier-signature']);
     expect(output).not.toContain(shipmentToken);
+  });
+
+  it('carries one trace ID through verification, route handling, and Payment Core', async () => {
+    const logs: string[] = [];
+    const app = makeApp(logs);
+    await app.inject(signedWebhook({ id: 'trace-pickup', kind: 'picked_up', shipmentToken, chargedFee: 3000 }));
+    await app.close();
+
+    const records = logs.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const boundaryRecords = records.filter((record) =>
+      ['provider_operation', 'courier_webhook_verified', 'command_received', 'command_rejected'].includes(String(record.event))
+    );
+    expect(boundaryRecords.map((record) => record.trace_id)).toHaveLength(4);
+    expect(new Set(boundaryRecords.map((record) => record.trace_id)).size).toBe(1);
+  });
+
+  it.each([
+    ['timeout', 'timeout'],
+    ['http_500', 'retryable_failure']
+  ] as const)('maps courier %s injection to a safe unavailable response', async (mode, canonicalOutcome) => {
+    const logs: string[] = [];
+    const providerLogs: Record<string, unknown>[] = [];
+    const app = buildServer({
+      logger: true,
+      loggerStream: { write: (message) => logs.push(message) },
+      courierProvider: withFaultInjection({
+        mode, provider: 'courier', operation: 'verify_and_normalize',
+        logger: { info: (fields) => providerLogs.push(fields) }
+      }, new HmacCourierProvider(secret))
+    });
+    const response = await app.inject(signedWebhook({ id: `fault-${mode}`, kind: 'picked_up', shipmentToken, chargedFee: 3000 }));
+    await app.close();
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: 'verification_unavailable' });
+    expect(await processedOutcome(`fault-${mode}`)).toBeUndefined();
+    const records = [...logs.map((line) => JSON.parse(line) as Record<string, unknown>), ...providerLogs];
+    expect(records.some((record) => record.outcome === canonicalOutcome)).toBe(true);
+    expect(JSON.stringify(records)).not.toContain(secret);
+    expect(JSON.stringify(records)).not.toContain(shipmentToken);
   });
 });

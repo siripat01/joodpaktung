@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { CourierWebhookError } from '../ports/courier-provider.js';
 
 export type FaultMode = 'timeout' | 'http_500' | 'retryable_failure' | 'permanent_rejection' | 'delay' | 'duplicate';
 
@@ -10,17 +11,21 @@ export type FaultOptions = {
   readonly delayMs?: number;
 };
 
-export class FaultInjectionError extends Error {
-  constructor(readonly failure: 'timeout' | 'http_500') {
-    super(`injected provider ${failure}`);
-    this.name = 'FaultInjectionError';
-  }
+function canonicalOutcome(mode: FaultMode): string {
+  return mode === 'http_500' ? 'retryable_failure' : mode;
 }
 
-function failedResult(mode: FaultMode): unknown {
-  if (mode === 'retryable_failure' || mode === 'permanent_rejection') return { outcome: mode };
-  if (mode === 'timeout' || mode === 'http_500') throw new FaultInjectionError(mode);
-  return undefined;
+function failedResult(mode: FaultMode, operation: string, input: Record<string, unknown> | undefined): unknown {
+  if (!['timeout', 'http_500', 'retryable_failure', 'permanent_rejection'].includes(mode)) return undefined;
+
+  const outcome = canonicalOutcome(mode);
+  if (operation === 'verifyAndNormalize') {
+    throw new CourierWebhookError(outcome as 'timeout' | 'retryable_failure' | 'permanent_rejection');
+  }
+  return {
+    outcome,
+    ...(typeof input?.notificationId === 'string' ? { notificationId: input.notificationId } : {})
+  };
 }
 
 export function withFaultInjection<T extends object>(options: FaultOptions, provider: T): T {
@@ -36,7 +41,7 @@ export function withFaultInjection<T extends object>(options: FaultOptions, prov
           ...(typeof input?.orderId === 'string' ? { order_id: input.orderId } : {}),
           provider: options.provider,
           operation: options.operation,
-          outcome: options.mode,
+          outcome: canonicalOutcome(options.mode),
           duration_ms: 0
         });
         if (options.mode === 'delay') await new Promise((resolve) => setTimeout(resolve, options.delayMs ?? 250));
@@ -44,7 +49,7 @@ export function withFaultInjection<T extends object>(options: FaultOptions, prov
           const result: unknown = await Reflect.apply(value, target, args);
           return [result, result];
         }
-        const injected = failedResult(options.mode);
+        const injected = failedResult(options.mode, String(property), input);
         if (injected !== undefined) return injected;
         return Reflect.apply(value, target, args) as Promise<unknown>;
       };

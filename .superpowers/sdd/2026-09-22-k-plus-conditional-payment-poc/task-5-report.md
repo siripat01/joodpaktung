@@ -39,3 +39,51 @@ D-016/D-017 remain unchanged. No Task 6 commands, projections, or SSE were added
 - No `.orig` or `.rej` patch artifacts remain, and `AGENTS.md` remains unstaged and untouched by this task.
 
 Commit subject: feat: add local provider adapters and signed courier mock
+
+
+## Review fix round 1 (base `10bf232`)
+
+Addressed the Important fault-outcome finding and the Minor trace-correlation finding. Result-returning provider faults now return canonical `timeout` or `retryable_failure` outcomes (including the required notification ID); courier verification faults throw typed `CourierWebhookError` failures, and the webhook maps them to a redacted HTTP 503 response without recording or applying an event. The route now creates and carries a single trace ID through provider verification, webhook logging, and Payment Core. No money rules or other task scope changed.
+
+### Test files
+
+- `apps/core/test/adapters/provider-contract.test.ts`: result-port timeout/HTTP 500 outcomes, notification ID preservation, typed courier failures, explicit correlation ID preservation.
+- `apps/core/test/http/courier-webhook.test.ts`: transient courier failure mapping/no financial event, redaction, and same trace ID across verification/route/Core.
+
+### RED evidence
+
+Command:
+
+```sh
+DATABASE_URL=postgres://kplus:kplus@localhost:5432/kplus_test NPM_CONFIG_ENGINE_STRICT=false pnpm --filter @kplus/core test -- adapters/provider-contract http/courier-webhook
+```
+
+Output summary: exit 1; 2 test files failed and 9 passed; 5 tests failed and 52 passed. Expected failures: payment and notification faults rejected with `FaultInjectionError`; courier fault was not a typed canonical error; trace IDs differed (two unique IDs); HTTP 500 did not log `retryable_failure`.
+
+### GREEN verification
+
+Focused command:
+
+```sh
+DATABASE_URL=postgres://kplus:kplus@localhost:5432/kplus_test NPM_CONFIG_ENGINE_STRICT=false pnpm --filter @kplus/core test -- adapters/provider-contract http/courier-webhook
+```
+
+Output: exit 0; 11 test files passed, 57 tests passed (Vitest ran the full Core suite for this filter invocation).
+
+Core typecheck:
+
+```sh
+NPM_CONFIG_ENGINE_STRICT=false pnpm --filter @kplus/core typecheck
+```
+
+Output: exit 0; `tsc --noEmit` completed successfully.
+
+Full workspace verification:
+
+```sh
+DATABASE_URL=postgres://kplus:kplus@localhost:5432/kplus_test NPM_CONFIG_ENGINE_STRICT=false pnpm test && NPM_CONFIG_ENGINE_STRICT=false pnpm typecheck
+```
+
+Output: exit 0. Core: 11 files / 57 tests passed. Mock Courier: 2 files / 5 tests passed. Web: no test files (configured `--passWithNoTests`). Typecheck completed successfully for Core, Web, and Mock Courier. pnpm emitted the known engine warning: repo requests Node `24.21.0`, host is `v24.15.0`; `NPM_CONFIG_ENGINE_STRICT=false` was used as instructed.
+
+The `.orig` artifact reported earlier is absent from this worktree; no untracked patch artifacts were created. `AGENTS.md` remains an existing unrelated modification and was not staged.

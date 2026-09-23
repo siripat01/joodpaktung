@@ -6,12 +6,12 @@ export type NormalizedCourierEvent =
   | { readonly kind: 'courier_charge_updated'; readonly eventKey: string; readonly shipmentToken: string; readonly chargedFee: number; readonly finalized: boolean };
 
 export interface CourierProviderPort {
-  verifyAndNormalize(input: { readonly rawBody: Buffer; readonly signature: string }): Promise<NormalizedCourierEvent>;
+  verifyAndNormalize(input: { readonly rawBody: Buffer; readonly signature: string; readonly traceId?: string }): Promise<NormalizedCourierEvent>;
 }
 
 export class CourierWebhookError extends Error {
-  constructor(readonly code: 'invalid_signature' | 'invalid_payload') {
-    super(code === 'invalid_signature' ? 'courier signature is invalid' : 'courier payload is invalid');
+  constructor(readonly code: 'invalid_signature' | 'invalid_payload' | 'timeout' | 'retryable_failure' | 'permanent_rejection') {
+    super(`courier verification failed: ${code}`);
     this.name = 'CourierWebhookError';
   }
 }

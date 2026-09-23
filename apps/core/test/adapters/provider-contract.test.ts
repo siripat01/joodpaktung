@@ -1,10 +1,10 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { FaultInjectionError, withFaultInjection } from '../../src/adapters/fault-decorator.js';
+import { withFaultInjection } from '../../src/adapters/fault-decorator.js';
 import { withLogging } from '../../src/adapters/logging-decorator.js';
 import { LocalChatNotificationProvider } from '../../src/adapters/local-chat.js';
 import { LocalPaymentProvider } from '../../src/adapters/local-payment.js';
-import { HmacCourierProvider } from '../../src/ports/courier-provider.js';
+import { CourierWebhookError, HmacCourierProvider } from '../../src/ports/courier-provider.js';
 
 const secret = 'courier-hmac-test-secret';
 
@@ -54,27 +54,53 @@ describe('provider contracts', () => {
       operation: 'verify_webhook',
       logger: { info: (fields) => records.push(fields) }
     }, new HmacCourierProvider(secret));
-    const input = signedEvent({ id: 'pickup-safe-id', kind: 'picked_up', shipmentToken: 'private-token', chargedFee: 3000 });
+    const input = { ...signedEvent({ id: 'pickup-safe-id', kind: 'picked_up', shipmentToken: 'private-token', chargedFee: 3000 }), traceId: 'trace-courier-1' };
 
     await provider.verifyAndNormalize(input);
 
     expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({ trace_id: expect.any(String), provider: 'courier', operation: 'verify_webhook', outcome: 'success' });
+    expect(records[0]).toMatchObject({ trace_id: 'trace-courier-1', provider: 'courier', operation: 'verify_webhook', outcome: 'success' });
     expect(JSON.stringify(records)).not.toContain(secret);
     expect(JSON.stringify(records)).not.toContain(input.signature);
     expect(JSON.stringify(records)).not.toContain('private-token');
   });
 
-  it('returns deterministic fault-injection failures without calling the provider', async () => {
+  it('returns canonical timeout and retryable outcomes for payment faults without calling the provider', async () => {
     let called = false;
     const records: Record<string, unknown>[] = [];
-    const provider = withFaultInjection({ mode: 'timeout', provider: 'payment', operation: 'submit', logger: { info: (fields) => records.push(fields) } }, {
+    const payment = {
       submit: async (_input: { traceId: string; orderId: string; idempotencyKey: string; action: 'reserve'; amountSatang: string }) => { called = true; return { outcome: 'success' as const, providerReference: 'local-1' }; }
-    });
+    };
+    const input = { traceId: 'trace-1', orderId: 'order-1', idempotencyKey: 'payment-1', action: 'reserve' as const, amountSatang: '133500' };
+    const timeoutProvider = withFaultInjection({ mode: 'timeout', provider: 'payment', operation: 'submit', logger: { info: (fields) => records.push(fields) } }, payment);
+    const failedServerProvider = withFaultInjection({ mode: 'http_500', provider: 'payment', operation: 'submit', logger: { info: (fields) => records.push(fields) } }, payment);
 
-    await expect(provider.submit({ traceId: 'trace-1', orderId: 'order-1', idempotencyKey: 'payment-1', action: 'reserve', amountSatang: '133500' })).rejects.toBeInstanceOf(FaultInjectionError);
+    await expect(timeoutProvider.submit(input)).resolves.toEqual({ outcome: 'timeout' });
+    await expect(failedServerProvider.submit(input)).resolves.toEqual({ outcome: 'retryable_failure' });
     expect(called).toBe(false);
     expect(records[0]).toMatchObject({ event: 'provider_fault_injected', trace_id: 'trace-1', provider: 'payment', operation: 'submit', outcome: 'timeout' });
+    expect(records[1]).toMatchObject({ outcome: 'retryable_failure' });
+  });
+
+  it('returns notification faults with the required notification identifier', async () => {
+    const notification = { traceId: 'trace-chat', orderId: 'order-1', notificationId: 'notification-1', recipient: 'seller' as const, message: 'Order accepted' };
+    const provider = { send: async (input: { notificationId: string }) => ({ outcome: 'success' as const, notificationId: input.notificationId }) };
+    const logger = { info: (_fields: Record<string, unknown>) => undefined };
+
+    await expect(withFaultInjection({ mode: 'timeout', provider: 'chat', operation: 'send', logger }, provider).send(notification))
+      .resolves.toEqual({ outcome: 'timeout', notificationId: 'notification-1' });
+    await expect(withFaultInjection({ mode: 'http_500', provider: 'chat', operation: 'send', logger }, provider).send(notification))
+      .resolves.toEqual({ outcome: 'retryable_failure', notificationId: 'notification-1' });
+  });
+
+  it('maps courier timeout and HTTP 500 to typed canonical verification failures', async () => {
+    const input = signedEvent({ id: 'pickup-fault', kind: 'picked_up', shipmentToken: 'shipment-1', chargedFee: 3000 });
+    const logger = { info: (_fields: Record<string, unknown>) => undefined };
+
+    await expect(withFaultInjection({ mode: 'timeout', provider: 'courier', operation: 'verify', logger }, new HmacCourierProvider(secret)).verifyAndNormalize(input))
+      .rejects.toMatchObject({ constructor: CourierWebhookError, code: 'timeout' });
+    await expect(withFaultInjection({ mode: 'http_500', provider: 'courier', operation: 'verify', logger }, new HmacCourierProvider(secret)).verifyAndNormalize(input))
+      .rejects.toMatchObject({ constructor: CourierWebhookError, code: 'retryable_failure' });
   });
   it('returns the same payment result for a repeated idempotency key', async () => {
     const provider = new LocalPaymentProvider();

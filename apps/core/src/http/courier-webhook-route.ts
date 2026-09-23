@@ -32,13 +32,15 @@ export function registerCourierWebhookRoute(app: FastifyInstance, courierProvide
 
     let event: NormalizedCourierEvent;
     try {
-      event = await courierProvider.verifyAndNormalize({ rawBody: request.body, signature });
+      event = await courierProvider.verifyAndNormalize({ rawBody: request.body, signature, traceId });
     } catch (error) {
       const invalidSignature = error instanceof CourierWebhookError && error.code === 'invalid_signature';
       const invalidPayload = error instanceof CourierWebhookError && error.code === 'invalid_payload';
+      const canonicalFailure = error instanceof CourierWebhookError && ['timeout', 'retryable_failure', 'permanent_rejection'].includes(error.code)
+        ? error.code : undefined;
       request.log.info({
         event: 'courier_webhook_rejected', trace_id: traceId, request_id: request.id, provider: 'courier',
-        outcome: invalidSignature ? 'invalid_signature' : invalidPayload ? 'invalid_payload' : 'verification_failure',
+        outcome: invalidSignature ? 'invalid_signature' : invalidPayload ? 'invalid_payload' : canonicalFailure ?? 'verification_failure',
         error_type: error instanceof Error ? error.name : 'unknown'
       });
       if (invalidSignature) return reply.code(401).send({ error: 'invalid_signature' });
