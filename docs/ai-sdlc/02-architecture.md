@@ -74,7 +74,7 @@ The sole authority for:
 - timer completion; and
 - creating outbox events.
 
-The Engineering Console may submit an Operations verification command, but it uses the same Payment Core transaction path as every other command. It must carry a verified courier fee and evidence reference; it cannot bypass amount caps, state validation, ledger posting, or audit logging.
+The Engineering Console may submit an Operations verification command, but it uses the same Payment Core transaction path as every other command. It must carry a verified courier fee and evidence reference; it cannot bypass amount caps, state validation, ledger posting, or audit logging. Pickup and later signed reweigh events post courier charges to the `courier_payable` ledger account; the seller never receives shipping money. Seller product payout waits for a finalized courier charge and deducts any overage above the buyer-funded allowance.
 
 ### Go Worker
 
@@ -107,7 +107,7 @@ Each money-affecting command performs, in one PostgreSQL transaction:
 1. Lock the order row.
 2. Insert/check the idempotency record.
 3. Re-read current state and validate the transition.
-4. Append balanced ledger entries.
+4. Append balanced ledger entries, including `courier_payable` and any idempotent charge adjustment.
 5. Update order state and derived metadata.
 6. Insert/update timers and insert outbox events.
 7. Check order invariants.

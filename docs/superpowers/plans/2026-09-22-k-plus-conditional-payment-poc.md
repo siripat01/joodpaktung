@@ -50,7 +50,11 @@
 
 - **Task 1 — Complete:** implemented, Docker-verified, and reviewer-approved. Commits: `a125ff5`, `0e0d348`.
 - **Task 2 — Implementation and inline self-review complete:** TDD, domain suite, typecheck, and the follow-up type-safety fix are complete. Commits: `38b8799`, `a8f537b`. The current harness has no subagent-dispatch tool, so independent review is deferred to the required whole-branch gate before merge or push (D-012).
-- **Tasks 3–10 — Not started.**
+- **Task 3 — Complete:** implemented, TDD-verified, and independently reviewer-approved. Commits: `4c70786`, `714b2c6`, `27f4116`.
+- **ORM refactor — Complete:** TypeScript Payment Core persistence now uses Drizzle ORM under D-015. Commits: `4ada541`, `ee6ab2e`; independent review passed.
+- **Business Decision D-016/D-017:** buyer-funded shipping allowance is paid to `courier_payable`; `Shipped` replaces `PartiallyReleased`; late courier charge adjustments are idempotent; seller product payout waits for charge finalization.
+- **Task 4 — Complete:** direct courier settlement and the D-016/D-017 correction are implemented in commits `ef4c79a..cb4137b`, independently approved with 0 Critical/Important findings, and Terra-verified with 41 Core tests plus workspace typecheck.
+- **Tasks 5–10 — Not started.**
 
 ### Task 1: Bootstrap the pinned pnpm workspace and services
 
@@ -196,7 +200,7 @@ Expected: PASS; all legal and illegal state origins, hold, shipping cap, remaini
 - Consumes: PaymentState and LedgerPosting from Task 2.
 - Produces: withTransaction(fn), lockOrder(client, orderId), appendLedgerEntries(client, entries), and resetFixture().
 
-- [ ] **Step 1: Write failing migration and reset tests**
+    - [x] **Step 1: Write failing migration and reset tests**
 
     it('creates durable financial tables and the seed order', async () => {
       await migrate(testDatabaseUrl);
@@ -208,13 +212,13 @@ Expected: PASS; all legal and illegal state origins, hold, shipping cap, remaini
       expect(await seedOrder()).toMatchObject({ state: 'pre_payment', total_satang: 133500 });
     });
 
-- [ ] **Step 2: Run test to verify it fails**
+    - [x] **Step 2: Run test to verify it fails**
 
 Run: DATABASE_URL=postgres://kplus:kplus@localhost:5432/kplus_test pnpm --filter @kplus/core test -- integration/migrations
 
 Expected: FAIL because migrations and fixture reset do not exist.
 
-- [ ] **Step 3: Write schema and transaction helpers**
+    - [x] **Step 3: Write schema and transaction helpers**
 
     CREATE TABLE processed_events (
       event_key text PRIMARY KEY,
@@ -241,13 +245,13 @@ Expected: FAIL because migrations and fixture reset do not exist.
 
 Use parameterized SQL and SELECT FOR UPDATE for order locks. Add a database trigger rejecting UPDATE or DELETE on ledger_entries. Reset truncates dependent tables, resets clock_state, and inserts one pre-payment seed order.
 
-- [ ] **Step 4: Verify reset speed and schema rules**
+    - [x] **Step 4: Verify reset speed and schema rules**
 
 Run: pnpm db:migrate && time pnpm fixture:reset && pnpm --filter @kplus/core test -- integration/migrations integration/fixture-reset
 
 Expected: PASS; reset takes under two seconds and a ledger mutation fails.
 
-- [ ] **Step 5: Commit**
+    - [x] **Step 5: Commit**
 
     git add apps/core/migrations apps/core/src/db scripts apps/core/test/integration
     git commit -m "feat: add postgres schema transactions and seed fixture"
@@ -262,7 +266,7 @@ Expected: PASS; reset takes under two seconds and a ledger mutation fails.
 - Consumes: Task 2 domain functions and Task 3 repositories.
 - Produces: type PaymentCommand, type CommandContext, type CommandResult, handleCommand(command, context): Promise<CommandResult>, and reconcile(): Promise<ReconciliationResult>.
 
-- [ ] **Step 1: Write failing command and idempotency tests**
+- [x] **Step 1: Write failing command and idempotency tests**
 
     it('returns the original result when a pickup command is replayed', async () => {
       const command = { type: 'courier_pickup', orderId, eventKey: 'pickup-1', chargedFee: 4500 } as const;
@@ -277,17 +281,18 @@ Expected: PASS; reset takes under two seconds and a ledger mutation fails.
       expect(await reconcile()).toMatchObject({ ok: true, violations: [] });
     });
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: pnpm --filter @kplus/core test -- integration/command-handler integration/idempotency integration/reconciliation
 
 Expected: FAIL because commands have no handler.
 
-- [ ] **Step 3: Implement one transaction path for every command**
+- [x] **Step 3: Implement one transaction path for every command**
 
     export type PaymentCommand =
       | { type: 'seller_accepted_and_funded'; orderId: string; eventKey: string }
       | { type: 'courier_pickup'; orderId: string; eventKey: string; chargedFee: number }
+      | { type: 'courier_charge_updated'; orderId: string; eventKey: string; chargedFee: number; finalized: boolean }
       | { type: 'courier_unavailable'; orderId: string; eventKey: string }
       | { type: 'operations_verify_fee'; orderId: string; eventKey: string; chargedFee: number; evidenceRef: string }
       | { type: 'buyer_confirmed' | 'buyer_disputed' | 'ship_by_expired' | 'verification_expired' | 'auto_release_expired'; orderId: string; eventKey: string }
@@ -311,13 +316,13 @@ Expected: FAIL because commands have no handler.
 
 Support seller_accepted_and_funded, courier_pickup, courier_unavailable, operations_verify_fee, buyer_confirmed, buyer_disputed, ship_by_expired, verification_expired, auto_release_expired, operations_resolve_refund, and operations_resolve_release. Record invalid courier events as rejected-invalid-transition before returning. Operations commands require a nonempty evidence reference.
 
-- [ ] **Step 4: Run transaction, invariant, and concurrency proof**
+- [x] **Step 4: Run transaction, invariant, and concurrency proof**
 
 Run: pnpm --filter @kplus/core test -- integration/command-handler integration/idempotency integration/reconciliation
 
 Expected: PASS; duplicate, invalid, rollback, balance, terminal-total, and global-hold assertions pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
     git add apps/core/src/application apps/core/test/integration
     git commit -m "feat: add idempotent payment commands and reconciliation"

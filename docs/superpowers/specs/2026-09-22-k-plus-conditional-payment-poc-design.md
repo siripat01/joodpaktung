@@ -14,7 +14,7 @@ The single-page app has three live panels:
 - Seller: accepts or rejects the pre-payment intent, receives a system-issued shipment token/label after funding, and sees releases.
 - Engineering Console: shows the state diagram, T-account ledger, invariant result, event outcomes, simulated clock, and deterministic chaos/test progress.
 
-The seeded order holds 133500 satang: product 129000 and shipping maximum 4500. Amounts are signed integers in satang. The only payment states are `Reserved`, `PendingVerification`, `PartiallyReleased`, `Disputed`, `Released`, and `Refunded`.
+The seeded order holds 133500 satang: product 129000 and a shipping allowance of 4500. Amounts are signed integers in satang. The payment states are `Reserved`, `PendingVerification`, `Shipped`, `Disputed`, `Released`, and `Refunded`.
 
 ## Architecture and ownership
 
@@ -33,17 +33,17 @@ Seller acceptance happens before funding. Seller rejection only cancels the pre-
 | Source state | Evidence or command | Target state | Financial effect |
 |---|---|---|---|
 | Reserved | `ship_by` timer expires | Refunded | Move all remaining hold to `buyer_refund`. |
-| Reserved | Valid signed pickup webhook | PartiallyReleased | Move `min(charged_fee, 4500)` from hold to seller. |
+| Reserved | Valid signed pickup webhook with verified charge | Shipped | Move the verified charge from hold to `courier_payable`; do not pay seller shipping money. |
 | Reserved | Invalid/unavailable courier fee | PendingVerification | Do not release money. |
-| PendingVerification | Operations verifies fee and evidence | PartiallyReleased | Release only verified fee, capped at 4500. |
+| PendingVerification | Operations verifies fee and evidence | Shipped | Move the verified charge from hold to `courier_payable`; do not pay seller shipping money. |
 | PendingVerification | verification deadline expires | Refunded | Move all remaining hold to `buyer_refund`. |
-| PartiallyReleased | buyer confirms receipt | Released | Move the remaining hold to seller. |
-| PartiallyReleased | delivered dispute-window timer expires | Released | Move the remaining hold to seller. |
-| PartiallyReleased | buyer reports a problem | Disputed | Leave remaining hold unchanged. |
+| Shipped | buyer confirms receipt after courier charge finalization | Released | Pay seller product payout after courier overage deduction; refund unused allowance. |
+| Shipped | delivered dispute-window timer expires after courier charge finalization | Released | Pay seller product payout after courier overage deduction; refund unused allowance. |
+| Shipped | buyer reports a problem | Disputed | Leave remaining hold unchanged. |
 | Disputed | Operations resolves for buyer | Refunded | Move remaining hold to `buyer_refund`. |
 | Disputed | Operations resolves for seller | Released | Move remaining hold to seller. |
 
-A shipment token is issued by the system and bound one-to-one with the order. Seller tracking input is never accepted as a release trigger. The courier fee must come from signed normalized courier data or Operations evidence, never the seller. A delivered webhook before pickup is terminally `rejected-invalid-transition` for its event key; its retries are `duplicate-ignored` and cannot reevaluate it.
+A shipment token is issued by the system and bound one-to-one with the order. Seller tracking input is never accepted as a release trigger. The buyer-funded shipping amount is an allowance, not a seller reimbursement. Verified courier charges post to `courier_payable`; unused allowance is refunded to the buyer, and courier overage reduces seller product payout. Signed courier reweigh/charge updates are idempotent adjustment events. A delivered webhook before pickup is terminally `rejected-invalid-transition` for its event key; its retries are `duplicate-ignored` and cannot reevaluate it. Seller product payout waits for courier charge finalization so a late reweigh can adjust the split without clawing back a completed seller payout.
 
 ## Provider boundaries and observability
 
@@ -53,7 +53,7 @@ Write JSON logs through Pino in TypeScript and `slog` in Go at HTTP, command, tr
 
 ## Correctness and test proof
 
-The accounts are `buyer_available`, `hold_suspense`, `seller_available`, and `buyer_refund`. Each ledger transaction balances to zero. Per-order released-plus-refunded amount never exceeds the order total and equals it in terminal states. Global `hold_suspense` equals the remaining amount across non-terminal orders. An event key can create at most one financial effect. A reconciliation job recalculates these facts from the ledger.
+The accounts are `buyer_available`, `hold_suspense`, `courier_payable`, `seller_available`, and `buyer_refund`. Each ledger transaction balances to zero. `courier_paid + product_released + refunded + remaining_hold` always equals the order total, product payout never exceeds the product amount, and terminal orders have zero remaining hold. Global `hold_suspense` equals the remaining amount across non-terminal orders from one consistent snapshot. An event key can create at most one financial effect, while duplicate retries may create durable duplicate audit events. A reconciliation job recalculates these facts from the ledger.
 
 Tests are layered: pure TypeScript state and ledger unit tests; PostgreSQL integration tests for locks, rollback, uniqueness, leases, and outbox; adapter contracts; deterministic chaos; fast-check model tests; Go tests/race/benchmarks; and UI smoke tests. Live Quick Proof executes 500 generated sequences in 30–60 seconds, defaulting to worker concurrency 4; Full Proof executes 5000 in 3–8 minutes. Each uses an isolated database or schema and persists seed, replay path, and minimized failure trace.
 
