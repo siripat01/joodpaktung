@@ -5,12 +5,17 @@ services:
       dockerfile: apps/core/Dockerfile
     ports:
       - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://kplus:kplus@postgres:5432/kplus
+      COURIER_WEBHOOK_SECRET: ${COURIER_WEBHOOK_SECRET:-local-courier-secret}
   mock-courier:
     build:
       context: .
       dockerfile: apps/mock-courier/Dockerfile
     ports:
       - "3001:3001"
+    environment:
+      COURIER_WEBHOOK_SECRET: ${COURIER_WEBHOOK_SECRET:-local-courier-secret}
   web:
     build:
       context: .
