@@ -54,7 +54,8 @@
 - **ORM refactor — Complete:** TypeScript Payment Core persistence now uses Drizzle ORM under D-015. Commits: `4ada541`, `ee6ab2e`; independent review passed.
 - **Business Decision D-016/D-017:** buyer-funded shipping allowance is paid to `courier_payable`; `Shipped` replaces `PartiallyReleased`; late courier charge adjustments are idempotent; seller product payout waits for charge finalization.
 - **Task 4 — Complete:** direct courier settlement and the D-016/D-017 correction are implemented in commits `ef4c79a..cb4137b`, independently approved with 0 Critical/Important findings, and Terra-verified with 41 Core tests plus workspace typecheck.
-- **Tasks 5–10 — Not started.**
+- **Task 5 — Complete:** local provider ports, adapters, signed courier webhook and mock scenarios implemented in `10bf232`, with reviewer fixes in `c51ada3`; independent re-review passed. Terra verified 57 Core tests, 5 Mock Courier tests, and workspace typecheck.
+- **Tasks 6–10 — Not started.**
 
 ### Task 1: Bootstrap the pinned pnpm workspace and services
 
@@ -339,7 +340,7 @@ Expected: PASS; duplicate, invalid, rollback, balance, terminal-total, and globa
 - Consumes: handleCommand(command, context) from Task 4.
 - Produces: CourierProviderPort.verifyAndNormalize(input) and POST /webhooks/courier.
 
-- [ ] **Step 1: Write failing webhook contract tests**
+- [x] **Step 1: Write failing webhook contract tests**
 
     it('persists early delivered and ignores its replay', async () => {
       const webhook = signedWebhook({ id: 'delivered-early', kind: 'delivered', shipmentToken });
@@ -349,31 +350,32 @@ Expected: PASS; duplicate, invalid, rollback, balance, terminal-total, and globa
       expect((await app.inject(webhook)).json()).toMatchObject({ outcome: 'duplicate-ignored' });
     });
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: pnpm --filter @kplus/core test -- adapters/provider-contract http/courier-webhook && pnpm --filter @kplus/mock-courier test -- signing
 
 Expected: FAIL because ports, signing, and routes do not exist.
 
-- [ ] **Step 3: Define canonical ports and HMAC normalization**
+- [x] **Step 3: Define canonical ports and HMAC normalization**
 
     export type NormalizedCourierEvent =
       | { kind: 'picked_up'; eventKey: string; shipmentToken: string; chargedFee: number }
-      | { kind: 'delivered'; eventKey: string; shipmentToken: string };
+      | { kind: 'delivered'; eventKey: string; shipmentToken: string }
+      | { kind: 'courier_charge_updated'; eventKey: string; shipmentToken: string; chargedFee: number; finalized: boolean };
 
     export interface CourierProviderPort {
-      verifyAndNormalize(input: { rawBody: Buffer; signature: string }): Promise<NormalizedCourierEvent>;
+      verifyAndNormalize(input: { rawBody: Buffer; signature: string; traceId?: string }): Promise<NormalizedCourierEvent>;
     }
 
 Verify sha256 HMAC with timingSafeEqual. Bad signatures return 401 and never reach Core. Mock Courier produces valid/invalid signatures, duplicate IDs, delay, delivered-before-pickup, timeout, and 500. Decorators log safe metadata only and return deterministic injected failures.
 
-- [ ] **Step 4: Run adapter contract and redaction tests**
+- [x] **Step 4: Run adapter contract and redaction tests**
 
 Run: pnpm --filter @kplus/core test -- adapters/provider-contract http/courier-webhook && pnpm --filter @kplus/mock-courier test
 
 Expected: PASS; valid HMAC normalizes, invalid HMAC has no financial effect, ordering policy holds, and logs omit secrets.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
     git add apps/core/src/ports apps/core/src/adapters apps/core/src/http apps/mock-courier apps/core/test
     git commit -m "feat: add local provider adapters and signed courier mock"
