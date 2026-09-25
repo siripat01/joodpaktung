@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { bigint, boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type { PaymentState } from '../domain/types.js';
 
@@ -94,6 +95,7 @@ export const domainEvents = pgTable(
   'domain_events',
   {
     id: uuid('id').primaryKey(),
+    sequence: bigint('sequence', { mode: 'number' }).notNull().default(sql`nextval('domain_events_sequence_seq')`),
     orderId: uuid('order_id').notNull(),
     eventName: text('event_name').notNull(),
     payload: jsonb('payload').notNull().$type<Record<string, unknown>>(),

@@ -1,6 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { withLogging } from './adapters/logging-decorator.js';
 import { registerCourierWebhookRoute } from './http/courier-webhook-route.js';
+import { registerRoutes } from './http/routes.js';
+import { registerSseRoute, type CommittedEvent } from './http/sse.js';
+import type { PaymentCommand, CommandContext, CommandResult } from './application/commands.js';
+import { handleCommand } from './application/command-handler.js';
 import { HmacCourierProvider, type CourierProviderPort } from './ports/courier-provider.js';
 
 type LoggerStream = { write: (message: string) => void };
@@ -9,6 +13,8 @@ export function buildServer(options: {
   logger: boolean;
   loggerStream?: LoggerStream;
   courierProvider?: CourierProviderPort;
+  executeCommand?: (command: PaymentCommand, context: CommandContext) => Promise<CommandResult>;
+  readEvents?: (cursor: number) => Promise<CommittedEvent[]>;
 }): FastifyInstance {
   const app = Fastify({
     logger: options.logger
@@ -41,6 +47,8 @@ export function buildServer(options: {
     operation: 'verify_and_normalize',
     logger: app.log
   }, courierProvider));
+  registerRoutes(app, options.executeCommand ?? handleCommand);
+  registerSseRoute(app, options.readEvents);
 
   return app;
 }

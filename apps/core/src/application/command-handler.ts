@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { appendLedgerEntries, type LedgerEntryToAppend } from '../db/ledger-repository.js';
 import { lockOrder, saveOrder, type LockedOrder } from '../db/order-repository.js';
 import { domainEvents, outboxEvents, processedEvents, timers } from '../db/schema.js';
@@ -128,6 +128,9 @@ async function persistOutcome(
   command: PaymentCommand,
   result: CommandResult
 ): Promise<void> {
+  // Serialize event sequence assignment with commits so an SSE cursor cannot skip
+  // a concurrent transaction that commits after an event with a later sequence.
+  await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtext('kplus:domain-events'))`);
   await transaction.insert(processedEvents).values({
     eventKey: command.eventKey,
     orderId: command.orderId,
@@ -185,6 +188,7 @@ async function persistDuplicateAudit(
   command: PaymentCommand,
   original: CommandResult
 ): Promise<void> {
+  await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtext('kplus:domain-events'))`);
   await transaction.insert(domainEvents).values({
     id: randomUUID(),
     orderId: command.orderId,
