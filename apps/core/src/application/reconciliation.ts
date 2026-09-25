@@ -65,7 +65,7 @@ async function readReconciliationSnapshot(transaction: DatabaseTransaction): Pro
   return result.rows as unknown as ReconciliationRow[];
 }
 
-async function reconcileInTransaction(transaction: DatabaseTransaction): Promise<ReconciliationResult> {
+export async function reconcileInTransaction(transaction: DatabaseTransaction): Promise<ReconciliationResult> {
   const rows = await readReconciliationSnapshot(transaction);
   const violations: string[] = [];
   let expectedHold = 0n;

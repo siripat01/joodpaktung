@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 24.21.0
+  PNPM_VERSION: 10.21.0
+  GO_VERSION: 1.27.1
+  DATABASE_URL: postgres://kplus:kplus@localhost:5432/kplus_test
+  COURIER_WEBHOOK_SECRET: ci-only-courier-secret
+
+jobs:
+  typescript:
+    name: TypeScript and PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_DB: kplus_test
+          POSTGRES_USER: kplus
+          POSTGRES_PASSWORD: kplus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kplus -d kplus_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Enable pinned pnpm for setup-node caching
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check CI contract
+        run: pnpm ci:check
+      - name: Apply migrations and reset fixture
+        run: |
+          pnpm db:migrate
+          pnpm fixture:reset
+      - name: Typecheck workspace
+        run: pnpm typecheck
+      - name: Test workspace
+        run: pnpm test
+
+  worker:
+    name: Go worker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_DB: kplus_test
+          POSTGRES_USER: kplus
+          POSTGRES_PASSWORD: kplus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kplus -d kplus_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Enable pinned pnpm for setup-node caching
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/setup-go@v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # setup-go requires a dependency file before cache restore. Enable this
+          # after the generated worker/go.sum has been reviewed and committed.
+          cache: false
+      - name: Prepare worker database
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+          pnpm install --frozen-lockfile --filter @kplus/core
+          pnpm db:migrate
+          pnpm fixture:reset
+      - name: Verify pinned toolchain
+        run: test "$(go env GOVERSION)" = "go${GO_VERSION}"
+        working-directory: worker
+      - name: Resolve and verify worker modules
+        run: |
+          had_sum=false
+          git ls-files --error-unmatch go.sum >/dev/null 2>&1 && had_sum=true
+          go mod tidy
+          go mod verify
+          git diff --exit-code -- go.mod
+          if "$had_sum"; then
+            git diff --exit-code -- go.sum
+          else
+            git diff --no-index /dev/null go.sum > go-sum.patch || true
+            echo 'worker/go.sum is generated for inspection but is not a committed lock yet.'
+          fi
+        working-directory: worker
+      - name: Archive generated worker checksums
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: generated-worker-checksums
+          path: |
+            worker/go.sum
+            worker/go-sum.patch
+          if-no-files-found: warn
+      - name: Test worker
+        run: go test ./...
+        working-directory: worker
+      - name: Race-test worker
+        run: go test -race ./...
+        working-directory: worker
+
+  compose:
+    name: Container build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Validate Compose model
+        run: docker compose config --quiet
+      - name: Build pinned service images
+        run: docker compose build

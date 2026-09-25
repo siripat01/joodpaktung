@@ -3,7 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.21.0",
   "engines": { "node": "24.21.0" },
+  "devDependencies": { "yaml": "2.8.1" },
   "scripts": {
+    "ci:check": "node scripts/check-ci.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "db:migrate": "node scripts/migrate.mjs",

@@ -7,7 +7,8 @@ export type PaymentCommand =
   | { type: 'courier_charge_updated'; orderId: string; eventKey: string; chargedFee: SatangInput; finalized: boolean }
   | { type: 'courier_unavailable'; orderId: string; eventKey: string }
   | { type: 'operations_verify_fee'; orderId: string; eventKey: string; chargedFee: SatangInput; evidenceRef: string }
-  | { type: 'buyer_confirmed' | 'buyer_disputed' | 'ship_by_expired' | 'verification_expired' | 'auto_release_expired'; orderId: string; eventKey: string }
+  | { type: 'buyer_confirmed' | 'buyer_disputed'; orderId: string; eventKey: string }
+  | { type: 'ship_by_expired' | 'verification_expired' | 'auto_release_expired'; orderId: string; eventKey: string; leaseToken: string }
   | { type: 'operations_resolve_refund' | 'operations_resolve_release'; orderId: string; eventKey: string; evidenceRef: string };
 
 export type CommandContext = {
@@ -32,4 +33,5 @@ export type CommandResult = {
   };
   readonly event?: { readonly name: string; readonly eventKey: string };
   readonly releasedSatang?: string;
+  readonly timerCompleted?: boolean;
 };

@@ -28,7 +28,9 @@ describe('Payment Core reconciliation', () => {
 
   it('keeps terminal accounting equal to order total', async () => {
     await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-1' }, {});
-    await handleCommand({ type: 'ship_by_expired', orderId, eventKey: 'timer-1' }, {});
+    await pool.query(`UPDATE timers SET status='leased',lease_owner='reconcile-token-123456',lease_until=now()+interval '1 minute' WHERE order_id=$1 AND kind='ship_by_expired'`, [orderId]);
+    const timer = await pool.query<{ event_key: string }>(`SELECT event_key FROM timers WHERE order_id=$1 AND kind='ship_by_expired'`, [orderId]);
+    await handleCommand({ type: 'ship_by_expired', orderId, eventKey: timer.rows[0]!.event_key, leaseToken: 'reconcile-token-123456' }, {});
     await expect(reconcile()).resolves.toMatchObject({ ok: true, violations: [] });
   });
 
