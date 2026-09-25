@@ -26,6 +26,16 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
+    depends_on:
+      - core
+      - postgres
+    environment:
+      DATABASE_URL: postgres://kplus:kplus@postgres:5432/kplus
+      CORE_URL: http://core:3000
+      WORKER_ID: worker-1
+      WORKER_POLL_INTERVAL: 1s
+      WORKER_LEASE_DURATION: 30s
+      WORKER_BATCH_SIZE: 16
   postgres:
     image: postgres:18.6-alpine
     environment:

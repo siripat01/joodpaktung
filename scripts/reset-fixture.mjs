@@ -27,7 +27,7 @@ export async function resetFixture(connectionString = databaseUrl()) {
       'kplus:migrations-and-fixture-reset'
     ]);
     await client.query(
-      'TRUNCATE domain_events, outbox_events, timers, processed_events, ledger_entries, orders, clock_state RESTART IDENTITY'
+      'TRUNCATE local_provider_deliveries, domain_events, outbox_events, timers, processed_events, ledger_entries, orders, clock_state RESTART IDENTITY'
     );
     await client.query('INSERT INTO clock_state (singleton, now_at) VALUES (true, now())');
     await client.query(

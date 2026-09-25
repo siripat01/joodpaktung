@@ -40,7 +40,8 @@ describe('PostgreSQL migrations', () => {
         'timers',
         'outbox_events',
         'domain_events',
-        'clock_state'
+        'clock_state',
+        'local_provider_deliveries'
       ])
     );
 

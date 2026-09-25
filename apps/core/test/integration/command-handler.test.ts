@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
@@ -27,6 +28,14 @@ async function resetFixture(): Promise<void> {
 describe('Payment Core command handler', () => {
   const pool = new Pool({ connectionString: databaseUrl });
 
+  async function leaseTimer(kind: 'ship_by_expired' | 'verification_expired' | 'auto_release_expired', eventKey: string) {
+    const leaseToken = `test-token-${randomUUID()}`;
+    await pool.query(`INSERT INTO timers(id,order_id,kind,due_at,status,lease_owner,lease_until,event_key,payload)
+      VALUES($1,$2,$3,now(),'leased',$4,now()+interval '1 minute',$5,'{}')`,
+      [randomUUID(), orderId, kind, leaseToken, eventKey]);
+    return { type: kind, orderId, eventKey, leaseToken } as const;
+  }
+
   beforeAll(async () => {
     await ensureTestDatabase();
     await resetFixture();
@@ -35,6 +44,50 @@ describe('Payment Core command handler', () => {
   afterAll(async () => {
     await closePool();
     await pool.end();
+  });
+
+  it('completes a claimed timer inside the same Core command transaction', async () => {
+    await resetFixture();
+    await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-timer-owner' }, {});
+    const claimed = await pool.query<{ event_key: string; lease_owner: string }>(
+      `UPDATE timers SET status = 'leased', lease_owner = 'worker-test', lease_until = now() + interval '1 minute'
+       WHERE order_id = $1 AND kind = 'ship_by_expired' RETURNING event_key, lease_owner`, [orderId]);
+    const eventKey = claimed.rows[0]?.event_key;
+    expect(eventKey).toBeTruthy();
+    await handleCommand({ type: 'ship_by_expired', orderId, eventKey: eventKey!, leaseToken: claimed.rows[0]!.lease_owner }, {});
+    expect(await pool.query('SELECT status, lease_owner, lease_until FROM timers WHERE event_key = $1', [eventKey]))
+      .toMatchObject({ rows: [{ status: 'completed', lease_owner: null, lease_until: null }] });
+  });
+
+  it('rolls back a timer command when its fencing token is stale', async () => {
+    await resetFixture();
+    await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-stale-timer' }, {});
+    const claimed = await pool.query<{ event_key: string }>(
+      `UPDATE timers SET status='leased', lease_owner='fresh-token-123456', lease_until=now()+interval '1 minute'
+       WHERE order_id=$1 AND kind='ship_by_expired' RETURNING event_key`, [orderId]);
+    const eventKey = claimed.rows[0]!.event_key;
+    await expect(handleCommand({ type: 'ship_by_expired', orderId, eventKey, leaseToken: 'stale-token-123456' }, {}))
+      .rejects.toThrow('timer lease lost');
+    expect(await pool.query('SELECT state FROM orders WHERE id=$1', [orderId])).toMatchObject({ rows: [{ state: 'Reserved' }] });
+    expect(await pool.query('SELECT count(*)::int AS count FROM processed_events WHERE event_key=$1', [eventKey]))
+      .toMatchObject({ rows: [{ count: 0 }] });
+    expect(await pool.query('SELECT status,lease_owner FROM timers WHERE event_key=$1', [eventKey]))
+      .toMatchObject({ rows: [{ status: 'leased', lease_owner: 'fresh-token-123456' }] });
+  });
+
+  it('lets a duplicate timer retry with a fresh lease token complete without a second effect', async () => {
+    await resetFixture();
+    await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-duplicate-timer' }, {});
+    const claimed = await pool.query<{ event_key: string; lease_owner: string }>(
+      `UPDATE timers SET status='leased', lease_owner='first-token-123456', lease_until=now()+interval '1 minute'
+       WHERE order_id=$1 AND kind='ship_by_expired' RETURNING event_key,lease_owner`, [orderId]);
+    const eventKey = claimed.rows[0]!.event_key;
+    await handleCommand({ type: 'ship_by_expired', orderId, eventKey, leaseToken: claimed.rows[0]!.lease_owner }, {});
+    await pool.query(`UPDATE timers SET status='leased',lease_owner='fresh-token-123456',lease_until=now()+interval '1 minute' WHERE event_key=$1`, [eventKey]);
+    await expect(handleCommand({ type: 'ship_by_expired', orderId, eventKey, leaseToken: 'fresh-token-123456' }, {}))
+      .resolves.toMatchObject({ outcome: 'duplicate-ignored', timerCompleted: true });
+    expect(await pool.query('SELECT count(*)::int AS count FROM ledger_entries WHERE order_id=$1', [orderId]))
+      .toMatchObject({ rows: [{ count: 4 }] });
   });
 
   it('funds an accepted order and pays the actual courier fee to courier payable', async () => {
@@ -291,15 +344,17 @@ describe('Payment Core command handler', () => {
     await resetFixture();
     await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-gate' }, {});
     await handleCommand({ type: 'courier_pickup', orderId, eventKey: 'pickup-gate', chargedFee: 3000 }, {});
-    await expect(handleCommand({ type: 'auto_release_expired', orderId, eventKey: 'auto-before-delivery' }, {})).resolves.toMatchObject({
+    await expect(handleCommand(await leaseTimer('auto_release_expired', 'auto-before-delivery'), {})).resolves.toMatchObject({
       outcome: 'rejected-invalid-transition', order: { state: 'Shipped', product_released_satang: '0' }
     });
+    expect(await pool.query(`SELECT status FROM timers WHERE event_key='auto-before-delivery'`))
+      .toMatchObject({ rows: [{ status: 'completed' }] });
     await handleCommand({ type: 'courier_delivered', orderId, eventKey: 'delivered-gate' }, {});
-    await expect(handleCommand({ type: 'auto_release_expired', orderId, eventKey: 'auto-before-finalization' }, {})).resolves.toMatchObject({
+    await expect(handleCommand(await leaseTimer('auto_release_expired', 'auto-before-finalization'), {})).resolves.toMatchObject({
       outcome: 'rejected-invalid-transition', order: { state: 'Shipped', product_released_satang: '0' }
     });
     await handleCommand({ type: 'courier_charge_updated', orderId, eventKey: 'charge-final-gate', chargedFee: 3000, finalized: true }, {});
-    await expect(handleCommand({ type: 'auto_release_expired', orderId, eventKey: 'auto-after-gate' }, {})).resolves.toMatchObject({
+    await expect(handleCommand(await leaseTimer('auto_release_expired', 'auto-after-gate'), {})).resolves.toMatchObject({
       outcome: 'processed', order: { state: 'Released', product_released_satang: '129000' }
     });
   });
@@ -445,7 +500,7 @@ describe('Payment Core command handler', () => {
     await handleCommand({ type: 'courier_pickup', orderId, eventKey: 'pickup-auto', chargedFee: 4500 }, {});
     await handleCommand({ type: 'courier_delivered', orderId, eventKey: 'delivered-auto' }, {});
     await handleCommand({ type: 'courier_charge_updated', orderId, eventKey: 'charge-auto', chargedFee: 4500, finalized: true }, {});
-    await expect(handleCommand({ type: 'auto_release_expired', orderId, eventKey: 'auto-1' }, {})).resolves.toMatchObject({
+    await expect(handleCommand(await leaseTimer('auto_release_expired', 'auto-1'), {})).resolves.toMatchObject({
       outcome: 'processed',
       order: { state: 'Released' }
     });
@@ -483,7 +538,7 @@ describe('Payment Core command handler', () => {
     await resetFixture();
     await handleCommand({ type: 'seller_accepted_and_funded', orderId, eventKey: 'fund-verify-expiry' }, {});
     await handleCommand({ type: 'courier_unavailable', orderId, eventKey: 'unavailable-expiry' }, {});
-    await expect(handleCommand({ type: 'verification_expired', orderId, eventKey: 'verification-expiry' }, {})).resolves.toMatchObject({
+    await expect(handleCommand(await leaseTimer('verification_expired', 'verification-expiry'), {})).resolves.toMatchObject({
       outcome: 'processed',
       order: { state: 'Refunded' }
     });
