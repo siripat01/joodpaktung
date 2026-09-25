@@ -2,6 +2,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { withLogging } from './adapters/logging-decorator.js';
 import { registerCourierWebhookRoute } from './http/courier-webhook-route.js';
 import { HmacCourierProvider, type CourierProviderPort } from './ports/courier-provider.js';
+import { registerCoreRoutes } from './http/routes.js';
+import { loggerOptions } from './observability/logger.js';
 
 type LoggerStream = { write: (message: string) => void };
 
@@ -11,17 +13,7 @@ export function buildServer(options: {
   courierProvider?: CourierProviderPort;
 }): FastifyInstance {
   const app = Fastify({
-    logger: options.logger
-      ? {
-          serializers: {
-            req: (request: { method: string; url: string }) => ({
-              method: request.method,
-              url: request.url.split('?', 1)[0]
-            })
-          },
-          ...(options.loggerStream ? { stream: options.loggerStream } : {})
-        }
-      : false
+    logger: options.logger ? loggerOptions(options.loggerStream) : false
   });
 
   app.get('/health', async () => ({
@@ -41,6 +33,7 @@ export function buildServer(options: {
     operation: 'verify_and_normalize',
     logger: app.log
   }, courierProvider));
+  registerCoreRoutes(app);
 
   return app;
 }

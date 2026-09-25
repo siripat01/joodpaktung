@@ -44,6 +44,11 @@ describe('fixture reset', () => {
       [randomUUID(), seedOrderId, 'fixture-test', `fixture-${randomUUID()}`, {}]
     );
     await pool.query(
+      `INSERT INTO local_provider_deliveries (notification_key, outbox_id, order_id, kind)
+       VALUES ($1, $2, $3, $4)`,
+      [`fixture-${randomUUID()}`, randomUUID(), seedOrderId, 'fixture-test']
+    );
+    await pool.query(
       `INSERT INTO timers (id, order_id, kind, due_at, event_key)
        VALUES ($1, $2, $3, now(), $4)`,
       [randomUUID(), seedOrderId, 'fixture-test', `fixture-${randomUUID()}`]
@@ -88,7 +93,7 @@ describe('fixture reset', () => {
         total_satang: '133500'
       }
     ]);
-    for (const table of ['domain_events', 'outbox_events', 'timers', 'processed_events', 'ledger_entries']) {
+    for (const table of ['local_provider_deliveries', 'domain_events', 'outbox_events', 'timers', 'processed_events', 'ledger_entries']) {
       const result = await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM ${table}`);
       expect(result.rows[0]?.count).toBe('0');
     }

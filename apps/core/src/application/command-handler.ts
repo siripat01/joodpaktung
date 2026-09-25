@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { appendLedgerEntries, type LedgerEntryToAppend } from '../db/ledger-repository.js';
 import { lockOrder, saveOrder, type LockedOrder } from '../db/order-repository.js';
 import { domainEvents, outboxEvents, processedEvents, timers } from '../db/schema.js';
@@ -88,6 +88,22 @@ function publicOrder(order: LockedOrder): CommandResult['order'] {
   };
 }
 
+const TIMER_COMMAND_TYPES = new Set<PaymentCommand['type']>([
+  'ship_by_expired', 'verification_expired', 'auto_release_expired'
+]);
+
+async function completeOwnedTimer(transaction: DatabaseTransaction, command: PaymentCommand): Promise<boolean> {
+  if (!TIMER_COMMAND_TYPES.has(command.type)) return false;
+  if (!('leaseToken' in command) || !command.leaseToken) throw new Error('timer lease token required');
+  const completed = await transaction.update(timers)
+    .set({ status: 'completed', leaseOwner: null, leaseUntil: null, updatedAt: sql`now()` })
+    .where(and(eq(timers.eventKey, command.eventKey), eq(timers.orderId, command.orderId),
+      eq(timers.status, 'leased'), eq(timers.leaseOwner, command.leaseToken), sql`${timers.leaseUntil} > now()`))
+    .returning({ id: timers.id });
+  if (completed.length !== 1) throw new Error('timer lease lost');
+  return true;
+}
+
 function remainingSatang(order: LockedOrder): bigint {
   return (
     BigInt(order.total_satang) -
@@ -141,6 +157,7 @@ async function persistOutcome(
     payload: {
       eventKey: command.eventKey,
       outcome: result.outcome,
+      resultingState: result.order.state,
       releasedSatang: result.releasedSatang ?? '0',
       ...('evidenceRef' in command ? { evidenceRef: command.evidenceRef } : {})
     }
@@ -183,7 +200,8 @@ async function persistOutcome(
 async function persistDuplicateAudit(
   transaction: DatabaseTransaction,
   command: PaymentCommand,
-  original: CommandResult
+  original: CommandResult,
+  currentState: LockedOrder['state']
 ): Promise<void> {
   await transaction.insert(domainEvents).values({
     id: randomUUID(),
@@ -193,7 +211,8 @@ async function persistDuplicateAudit(
       eventKey: command.eventKey,
       command: command.type,
       outcome: 'duplicate-ignored',
-      originalOutcome: original.outcome
+      originalOutcome: original.outcome,
+      resultingState: currentState
     }
   });
 }
@@ -294,8 +313,9 @@ export async function handleCommand(command: PaymentCommand, context: CommandCon
       if (existing[0]) {
         const original = existing[0].result as CommandResult;
         const duplicate = { ...original, outcome: 'duplicate-ignored' as const };
-        await persistDuplicateAudit(transaction, command, original);
-        return duplicate;
+        await persistDuplicateAudit(transaction, command, original, order.state);
+        const timerCompleted = await completeOwnedTimer(transaction, command);
+        return timerCompleted ? { ...duplicate, timerCompleted } : duplicate;
       }
 
       const transactionId = randomUUID();
@@ -457,8 +477,10 @@ export async function handleCommand(command: PaymentCommand, context: CommandCon
           ...(releasedSatang ? { releasedSatang: releasedSatang.toString() } : {})
         };
         await assertAndLog(transaction, command, context, startedAt);
-        await persistOutcome(transaction, command, processed);
-        return processed;
+        const timerCompleted = await completeOwnedTimer(transaction, command);
+        const completedResult = timerCompleted ? { ...processed, timerCompleted } : processed;
+        await persistOutcome(transaction, command, completedResult);
+        return completedResult;
       } catch (error) {
         if (!(error instanceof DomainRejection)) throw error;
         const rejected: CommandResult = {
@@ -467,8 +489,10 @@ export async function handleCommand(command: PaymentCommand, context: CommandCon
           event: { name: command.type, eventKey: command.eventKey }
         };
         await assertAndLog(transaction, command, context, startedAt);
-        await persistOutcome(transaction, command, rejected);
-        return rejected;
+        const timerCompleted = await completeOwnedTimer(transaction, command);
+        const completedResult = timerCompleted ? { ...rejected, timerCompleted } : rejected;
+        await persistOutcome(transaction, command, completedResult);
+        return completedResult;
       }
     });
     if (result.outcome === 'duplicate-ignored') {
